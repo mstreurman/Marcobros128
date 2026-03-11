@@ -1,6 +1,6 @@
 # MARCO BROS 128 — Architecture Blueprint
 *Format: machine-readable reference for Claude. Update this file every time code changes.*
-*Last updated: Fix 23 — ClearScreen DI/EI + DrawCharXY trampoline pinned to $BFFD*
+*Last updated: Fix 24 — Turbo loader removed (was overwriting SFX_Play/SFX_Tick). v0.2.0*
 
 ---
 
@@ -303,8 +303,9 @@ SPR_MARCO_STAND, SPR_MARCO_WALK1, SPR_MARCO_WALK2, SPR_MARCO_JUMP
 | 22 | FIXED | Space key row: $7FFE not $BFFE |
 | 23 | FIXED | ClearScreen DI/EI — interrupt mid-LDIR corrupted stack |
 | 23b | FIXED | DrawCharXY trampoline not pinned — grew past $BFFC into bank boundary |
-| P1 | PENDING | AY_Silence loop: verify ld b,14 not ld b,0 (would zero bankswitch_ok) |
-| P2 | PENDING | Enemy spawn data: W1_SPAWNS in bank7 but LoadEnemySpawns reads bank0 — enemies never spawn |
+| P1 | FIXED | AY_Silence loop: confirmed ld b,14 in listing (BCA9). Clears only $807B-$8088, bankswitch_ok ($8095) unaffected. |
+| 24 | FIXED | Turbo loader (ORG $BD00) overwrote SFX_Play (BD62) and SFX_Tick (BD7F) in bank2. Removed entirely. |
+| P2 | PENDING | Game crashes to 128K menu after one frame — root cause TBD after Fix 24 retest. |
 | P3 | PENDING | Gameplay verification: player movement, enemy AI, collision, music/SFX |
 
 ---
@@ -318,6 +319,7 @@ build/marco128.szx → FUSE (File → Open) for testing
 ```
 
 make_szx.py detection signature: `$F3 $31 $F8 $BF` = `DI; LD SP,$BFF8` at GAME_START.
+Version string in binary: `DEFB "MB128 v0.2.0", 0` immediately after JP GAME_START at $8006.
 
 ---
 

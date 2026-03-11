@@ -1,0 +1,37 @@
+CHANGELOG — marco128.asm
+========================
+
+0.2.0 — 2026-03-11
+  Fix 24: Removed turbo loader ($BD00-$BDC6) from bank2.
+  The turbo loader ORG $BD00 was assembling OVER SFX_Play (BD62) and
+  SFX_Tick (BD7F), silently overwriting both routines with tape-loading
+  code. Any sound effect trigger would have corrupted the machine.
+  The turbo loader is not needed — game loads via SZX snapshot.
+  TURBO_ADDR EQU removed. Version string added to binary (MB128 v0.2.0).
+
+0.1.4 — 2026-03-11
+  Fix 23b: Pinned DrawCharXY trampoline to ORG $BFFD.
+  Without ORG, adding DI+EI to ClearScreen pushed the trampoline from
+  $BFFC to $BFFE, causing the JP $C000 to span the bank boundary and
+  overwrite the first byte of DrawCharXY_Real in bank7 with $C0 (RET NZ).
+  Renamed all Nintendo IP entity/sprite labels to original names:
+  WALKER, SHELLER, PWRUP. Added inspiration note to header.
+
+0.1.3 — 2026-03-11
+  Fix 23a: Added DI/EI wrapper to ClearScreen.
+  An interrupt firing mid-LDIR during a 6912-byte screen clear corrupted
+  the return address on the stack (RETI left SP 2 bytes off). ClearScreen
+  was always safe from GAME_START (which runs with DI) but not when called
+  from TitleScreen or ShowLevelEntry with interrupts enabled.
+
+0.1.2 — Previous session
+  Fix 22: Space key row corrected to $7FFE ($BF high byte → in a,($FE)).
+  Keyboard row was reading $BFFE instead of $7FFE — Space was never detected.
+
+0.1.1 — Previous session
+  Fix 19: DoLevelBanking moved to bank2 (fixed) to prevent bank7
+  paging itself out mid-execution.
+
+0.1.0 — Previous session
+  Initial working build. IM2 setup, AY music, title screen, basic
+  game loop structure. Fixes 1-21 applied cumulatively.

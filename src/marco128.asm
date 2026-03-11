@@ -4,6 +4,7 @@
 ; Inspired by classic 8-bit platformers of the 1980s.
 ; Assembler: sjasmplus (z00m fork)
 ; Build:     sjasmplus --nologo --lst=build/marco128.lst marco128.asm
+; Version:   0.2.0
 ; ============================================================
 
     DEVICE ZXSPECTRUM128
@@ -23,7 +24,6 @@ SCREEN_SIZE     EQU 6912
 IM2_TABLE       EQU $7E00
 IM2_JUMP        EQU $BCBC
 HANDLER_ADDR    EQU $BC00
-TURBO_ADDR      EQU $BD00
 ENGINE_BASE     EQU $8000
 
 TILE_AIR        EQU 0
@@ -123,6 +123,7 @@ NOTE_G6         EQU  71
     ld a, 2
     out ($FE), a
     jp GAME_START
+    DEFB "MB128 v0.2.0", 0   ; version tag in binary
 
 ; ============================================================
 ; GAME VARIABLES  ($8003 onwards)
@@ -3114,155 +3115,6 @@ MainLoop:
 ; ============================================================
     ORG IM2_TABLE
     DS 257, $BC
-
-; ============================================================
-; TURBO LOADER ($BD00 in Bank 2)
-; ============================================================
-    ORG TURBO_ADDR
-
-TURBO_ENTRY:
-    di
-    ld sp, $BFF8
-
-    ; Silence AY
-    ld bc, $FFFD
-    ld a, AY_MIXER
-    out (c), a
-    ld bc, $BFFD
-    ld a, $FF
-    out (c), a
-    ld bc, $FFFD
-    ld a, AY_VOL_A
-    out (c), a
-    ld bc, $BFFD
-    xor a
-    out (c), a
-    ld bc, $FFFD
-    ld a, AY_VOL_B
-    out (c), a
-    ld bc, $BFFD
-    xor a
-    out (c), a
-    ld bc, $FFFD
-    ld a, AY_VOL_C
-    out (c), a
-    ld bc, $BFFD
-    xor a
-    out (c), a
-
-    ld a, 2
-    out ($FE), a
-
-    ; Load bank 0 (World 1)
-    ld a, 0
-    call TL_PageAndLoad
-    ; Load bank 1 (World 2)
-    ld a, 1
-    call TL_PageAndLoad
-    ; Load bank 3 (World 3)
-    ld a, 3
-    call TL_PageAndLoad
-
-    ; Restore default paging (bank 0 at $C000)
-    ld a, ($5B5C)
-    and $F8
-    ld ($5B5C), a
-    ld bc, $7FFD
-    out (c), a
-
-    xor a
-    out ($FE), a
-
-    jp GAME_START
-
-TL_PageAndLoad:
-    ; A = bank number
-    push af
-    and $07
-    ld b, a
-    ld a, ($5B5C)
-    and $F8
-    or b
-    ld ($5B5C), a
-    ld bc, $7FFD
-    out (c), a
-
-    ld hl, $C000
-    ld bc, 16384
-    call TL_LoadBytes
-
-    pop af
-    ret
-
-; Turbo load BC bytes to HL from tape
-TL_LoadBytes:
-    push de
-    push hl
-
-    ; Wait for pilot pulses
-    ld de, 512
-.tlb_pilot:
-    call TL_ReadEdge
-    dec de
-    ld a, d
-    or e
-    jr nz, .tlb_pilot
-
-    ; Sync
-    call TL_ReadEdge
-
-.tlb_byte_loop:
-    ld d, 8
-    ld e, 0
-.tlb_bit:
-    call TL_ReadBit
-    rl e
-    dec d
-    jr nz, .tlb_bit
-    ld (hl), e
-    inc hl
-    dec bc
-    ld a, b
-    or c
-    jr nz, .tlb_byte_loop
-
-    pop hl
-    pop de
-    ret
-
-TL_ReadBit:
-    ld b, 40
-.trb_lo:
-    in a, ($FE)
-    rra
-    jr c, .trb_lo_done
-    djnz .trb_lo
-    or a
-    ret
-.trb_lo_done:
-    ld b, 40
-.trb_hi:
-    in a, ($FE)
-    rra
-    jr nc, .trb_hi_done
-    djnz .trb_hi
-    or a
-    ret
-.trb_hi_done:
-    ld a, b
-    cp 20
-    ccf
-    ret
-
-TL_ReadEdge:
-    ld b, $FF
-.tre_loop:
-    in a, ($FE)
-    rra
-    jr nc, .tre_done
-    djnz .tre_loop
-.tre_done:
-    ret
 
 ; ============================================================
 ; FONT DATA ($8E00 in Bank 2) — ASCII 32-127, 8 bytes each

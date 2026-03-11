@@ -122,3 +122,82 @@ Expected: title screen appears, music plays, Space → level card → gameplay.
 
 ---
 *Diary maintained by Claude. Add entries here for significant events.*
+
+---
+
+## Session: The Ghost in the Machine
+*Fix 24 — Turbo loader removed*
+*Version 0.2.0*
+
+### The symptom
+
+Game loads, title screen appears with music, pressing Space → black screen, blue
+border, crash to 128K menu. This was the same symptom as the session before, but
+the root cause had changed. Fix 23 (ClearScreen DI/EI) and Fix 23b (DrawCharXY
+trampoline pinned to $BFFD) had both applied correctly — the profiler confirmed
+BFFD=430 hits and C000=497, so bank7 was accessible and the trampoline worked.
+
+### What the profiler showed
+
+The new profiler data had one massively abnormal feature: address $BDC4 with
+**11,344,454** counts. Everything else in the game ran at counts in the low
+hundreds or thousands. Something at BDC4 was executing tens of millions of times.
+
+Cross-referencing with the listing immediately showed what was there:
+
+```
+$BDC4: 10 F9 = djnz .tre_loop   ← TL_ReadEdge timing loop
+```
+
+`TL_ReadEdge` is a subroutine from the **turbo loader** — it spins in a tight
+`djnz` loop counting tape edge timing pulses. It was sitting in bank2 at $BDC4.
+
+### The actual bug
+
+Fix 21 (remove turbo loader) was marked COMPLETED in the architecture notes from
+a previous session, but the code was never actually deleted from the source. The
+turbo loader block (`ORG TURBO_ADDR` = `ORG $BD00`) was still in `marco128.asm`
+at line 3119.
+
+`TURBO_ADDR = $BD00` is inside bank2 ($8000–$BFFF). The turbo loader extends
+from $BD00 to $BDC6. The audio routines assembled in the same bank2 PAGE block
+place `SFX_Play` at $BD62 and `SFX_Tick` at $BD7F — both squarely inside the
+turbo loader range.
+
+Since the turbo loader `ORG` block assembles **after** the audio code block in
+source order, the turbo loader silently overwrites `SFX_Play` and `SFX_Tick`
+completely. Neither routine exists in the final binary. Their addresses contain
+tape-loading code instead.
+
+In this particular run the game didn't happen to trigger SFX (the handler checks
+`sfx_active` before calling `SFX_Tick`, and `sfx_active` starts at zero), so the
+bad code was dormant. But the game was still crashing after one frame — a
+separate bug we haven't fully traced yet (profiler from the next run will tell us).
+
+### The fix
+
+Deleted the entire turbo loader block from `marco128.asm` (149 lines, $BD00–$BDC6).
+Removed the `TURBO_ADDR EQU $BD00` constant. `SFX_Play` and `SFX_Tick` are now
+the sole occupants of that address range in bank2.
+
+### What the peer review was right about
+
+The earlier question — *"is he still trying to manage those ORG statements manually?"*
+— turns out to be directly prophetic. Manual ORG management in a multi-section bank2
+means the LAST `ORG` block to touch an address range wins, silently. The assembler
+doesn't warn about overlapping code in the same bank. The turbo loader had been
+sitting in the source as dead weight for multiple sessions, quietly destroying SFX
+every time a binary was produced.
+
+### Version bump
+
+With Fix 24 applied this is version **0.2.0**. Version string embedded in binary
+at $8006: `"MB128 v0.2.0"`.
+
+### Pending after this fix
+
+1. Rebuild and retest — does the game survive its first frame now?
+2. Identify the one-frame crash (ROM 0004 hits in profiler suggest crash→reboot)
+3. Enemy spawn data verification
+4. Full gameplay test
+
