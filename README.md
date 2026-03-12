@@ -2,8 +2,7 @@
 ### An original 8-bit platformer for ZX Spectrum 128K Toastrack
 *Inspired by classic side-scrolling platformers of the 1980s.*
 
-**Current version: v0.4.4** — Interrupts now correctly re-enabled after handler (EI before RETI); Space key scan corrected; 16-bit enemy X coordinates; stack relocated to safe free area.
-
+**Current version: v0.4.4** — GetTileAt used ld de,level_map_cache which clobbered E (tile_x), making all tile lookups read 161 bytes past intended position — ground never detected, player fell through floor and crashed DrawSprite into attr/sysvar area.
 ---
 
 ## OVERVIEW
