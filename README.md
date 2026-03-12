@@ -2,6 +2,8 @@
 ### An original 8-bit platformer for ZX Spectrum 128K Toastrack
 *Inspired by classic side-scrolling platformers of the 1980s.*
 
+**Current version: v0.4.0** — Interrupts now correctly re-enabled after handler (EI before RETI); Space key scan corrected; 16-bit enemy X coordinates; stack relocated to safe free area.
+
 ---
 
 ## OVERVIEW

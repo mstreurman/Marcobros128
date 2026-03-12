@@ -1,6 +1,6 @@
 # MARCO BROS 128 — Architecture Blueprint
 *Format: machine-readable reference for Claude. Update this file every time code changes.*
-*Last updated: Fix 24 — Turbo loader removed (was overwriting SFX_Play/SFX_Tick). v0.2.0*
+*Last updated: Fix 27 — inverted jr nc/jr c in DrawTile/DrawSprite; tiles in third 2 wrote to attr/sysvar area. v0.4.2 — EI/RETI interrupt fix, Space key row, 16-bit enemy X, stack relocation. v0.4.0*
 
 ---
 
@@ -57,9 +57,10 @@ $8095        bankswitch_ok  DB   1=BankSwitch enabled; 0=no-op guard
                                  — AY_Silence is called from GAME_START only,
                                  never from Music_Stop (Music_Stop is safe).
 $8096–$81F5  level_map_cache DS 352  32×11 tile map, filled by LoadLevelMap
-~$8356       GAME_START     di; ld sp,$BFF8; ld a,1; ld(bankswitch_ok),a;
-                            call ClearScreen; call Setup_IM2; call AY_Silence;
-                            jp MainLoop
+~$8363       GAME_START     di; ld sp,$BBFE (Fix26d: free gap $841D-$BBFF, 14307 bytes);
+                            ld a,1; ld(bankswitch_ok),a;
+                            call Setup_IM2 (Fix25c: FIRST — sets IM2+EI);
+                            call ClearScreen; call AY_Silence; jp MainLoop
              [note: AY_Silence zeros $807B–$817A which INCLUDES bankswitch_ok.
               GAME_START sets bankswitch_ok BEFORE calling ClearScreen and
               AY_Silence will zero it — this is acceptable because BankSwitch
@@ -145,17 +146,19 @@ Handler body:
   increment frame_count (16-bit)
   if game_state == STATE_PLAYING: tick level_timer (every 50 frames)
   read Kempston port $1F → AND $1F → if $1F (floating) zero it
-  read keyboard Space ($BF / port $FE, bit 0) → OR fire bit
+  read keyboard Space ($7F / port $7FFE, bit 0) → OR fire bit  ; Fix26b
   compute joy_new (edge detect), update joy_held, joy_prev
   if music_playing: call Music_Tick ($BCF3)
   if sfx_active:   call SFX_Tick ($BD7F)
   call AY_WriteBuffer ($BCC0)
   pop ix, hl, de, bc, af           ; 5 pops = SP+10
-  ei
+  ; NO EI here — RETI restores IFF1 from IFF2 automatically (Fix25a)
+  ; Explicit EI before RETI enabled nested interrupts → stack corruption
+  ei                               ; Fix26a: re-enable before reti (DI zeros IFF2; RETI alone leaves interrupts off)
   reti                             ; SP+2 → back to interrupted PC
 ```
 **Stack balance: EXACTLY balanced. Any change breaks RET addresses.**
-Keyboard row: $BF (row 7FFE) for Space. `in a,($FE)` with A=$BF loaded into C first.
+Keyboard row: $7F (port $7FFE) for Space (Fix26b). `in a,($FE)` with A=$7F.
 
 ---
 
@@ -195,15 +198,14 @@ BankSwitch ($BFA5):
   out (c), a
   ret
 
-DoLevelBanking (in bank2, ~$CBD0 area):
-  Reads world/level → computes bank number (0/1/3)
-  Calls BankSwitch(level_bank) → pages in level data
-  Calls LoadLevelMap → fills level_map_cache from $C000
-  Calls LoadEnemySpawns → reads spawn table
+DoLevelBanking (in bank2, between LoadEnemySpawns and HANDLER):
+  Called from InitLevel (bank7). Reads cur_level_bank and level_num (already set).
+  Calls BankSwitch(cur_level_bank) → pages in level data (bank7 gone, safe in bank2)
+  Calls LoadLevelMap → fills level_map_cache
+  Calls LoadEnemySpawns → fills entity arrays
   Calls BankSwitch(7) → restores bank7
-  ret
-  CRITICAL: This must be in BANK2, not bank7. Calling BankSwitch from bank7
-  would page out bank7 and the return address would land in garbage.
+  ret → returns to InitLevel in bank7 (now restored)
+  CRITICAL: MUST be in BANK2. InitLevel cannot call BankSwitch directly (Fix25d).
 ```
 
 ---
@@ -261,15 +263,17 @@ So all IM2 vectors point to HANDLER at $BC00.
 ## STACK
 
 ```
-SP = $BFF8 (set by GAME_START, stays here as base)
-Stack grows DOWN into bank2 ($8000–$BFFF, fixed, uncontended)
+SP = $BBFE (Fix26d: free gap $841D–$BBFF between LoadEnemySpawns and HANDLER, 14307 bytes)
+Stack grows DOWN; max depth ~128 bytes → reaches ~$BB7E, clear of code at $841C.
+Previous $BF00 allowed stack to reach $BEE8 which overlaps MUSIC_OVERWORLD ($BE55).
+Safe distance: $BF00 - $BExx, well below BankSwitch ($BFA5) and ClearScreen ($BFC5).
 
 Typical call depth during ShowLevelEntry→ClearScreen:
   [BFF8] = base (nothing here during normal flow)
   [BFF6] = return addr from mg_level CALL ShowLevelEntry ($CC63)
   [BFF4] = return addr from ShowLevelEntry CALL ClearScreen ($CAAF)
   [BFF2] = interrupt PC pushed by hardware (while ClearScreen runs)
-  [BFEC] = handler saves: af,bc,de,hl,ix (SP-10)
+  [BBEC] = handler saves: af,bc,de,hl,ix (SP-10)
   ...handler runs, restores, RETI pops [BFF2], SP→$BFF4
   ClearScreen RET pops [BFF4]=$CAAF → ShowLevelEntry continues ✓
 ```
@@ -300,12 +304,22 @@ SPR_MARCO_STAND, SPR_MARCO_WALK1, SPR_MARCO_WALK2, SPR_MARCO_JUMP
 
 | # | Status | Description |
 |---|--------|-------------|
+| 27 | FIXED | DrawTile/DrawSprite jr nc→jr c: third-2 tiles wrote second char-row to attr/sysvar area (800+). |
+| 26a | FIXED | HANDLER DI zeros IFF2; RETI alone never re-enables interrupts → HALT loops forever. Added EI before RETI. |
+| 26b | FIXED | Keyboard scan used $BF (Enter row $BFFE); Space is $7F (row $7FFE). |
+| 26c | FIXED | LoadEnemySpawns tile_x*16 was 8-bit; tile>=16 overflowed. ent_xh never written. Full 16-bit fix across spawn/update/draw/collision. |
+| 26d | FIXED | SP=$BF00 let stack reach $BEE8, inside MUSIC_OVERWORLD ($BE55). Moved to $BBFE (free gap below HANDLER). |
 | 22 | FIXED | Space key row: $7FFE not $BFFE |
 | 23 | FIXED | ClearScreen DI/EI — interrupt mid-LDIR corrupted stack |
 | 23b | FIXED | DrawCharXY trampoline not pinned — grew past $BFFC into bank boundary |
 | P1 | FIXED | AY_Silence loop: confirmed ld b,14 in listing (BCA9). Clears only $807B-$8088, bankswitch_ok ($8095) unaffected. |
-| 24 | FIXED | Turbo loader (ORG $BD00) overwrote SFX_Play (BD62) and SFX_Tick (BD7F) in bank2. Removed entirely. |
-| P2 | PENDING | Game crashes to 128K menu after one frame — root cause TBD after Fix 24 retest. |
+| 24 | FIXED | Turbo loader (ORG $BD00) overwrote SFX_Play (BD62) and SFX_Tick (BD7F). |
+| 25a | FIXED | EI before RETI in handler enabled nested interrupts → stack into ClearScreen code. |
+| 25b | FIXED | SP=$BFF8 too close to ClearScreen code ($BFC5). Moved to $BF00. |
+| 25c | FIXED | GAME_START called ClearScreen before Setup_IM2. IM0 race at boot. |
+| 25d | FIXED | InitLevel (bank7) called BankSwitch directly → bank7 suicide. DoLevelBanking shim restored in bank2. |
+| 25e | FIXED | W1L2_MAP missing DS padding → W1_SPAWNS at C740 not C840. LoadEnemySpawns reads wrong address. |
+| 25f | FIXED | All spawn slot DS padding wrong. 42-byte slots instead of 32-byte. |
 | P3 | PENDING | Gameplay verification: player movement, enemy AI, collision, music/SFX |
 
 ---
@@ -318,7 +332,7 @@ build/bank*.bin    → tools/make_szx.py → build/marco128.szx
 build/marco128.szx → FUSE (File → Open) for testing
 ```
 
-make_szx.py detection signature: `$F3 $31 $F8 $BF` = `DI; LD SP,$BFF8` at GAME_START.
+make_szx.py detection signature: `$F3 $31 $FE $BB` = `DI; LD SP,$BBFE` at GAME_START.
 Version string in binary: `DEFB "MB128 v0.2.0", 0` immediately after JP GAME_START at $8006.
 
 ---

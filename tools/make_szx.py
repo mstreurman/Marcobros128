@@ -40,9 +40,9 @@ def load_bank(name, required=True):
     return data
 
 def find_game_start(bank2):
-    idx = bank2.find(bytes([0xF3, 0x31, 0xF8, 0xBF]))
+    idx = bank2.find(bytes([0xF3, 0x31, 0xFE, 0xBB]))
     if idx < 0:
-        print("ERROR: GAME_START (DI+LD SP,$BFF8) not found in bank2.bin")
+        print("ERROR: GAME_START (DI+LD SP,$BBFE) not found in bank2.bin")
         sys.exit(1)
     addr = 0x8000 + idx
     print(f"  GAME_START: ${addr:04X}")
@@ -125,8 +125,8 @@ def build_szx():
             # PC at offsets 10-11, SP at 12-13
             cdata[10] = gs & 0xFF
             cdata[11] = gs >> 8
-            cdata[12] = 0xF8        # SP = $BFF8
-            cdata[13] = 0xBF
+            cdata[12] = 0xFE        # SP = $BBFE (Fix 26d: free gap below HANDLER)
+            cdata[13] = 0xBB        # SP high byte
             cdata[30] = 0x7E        # I = $7E (IM2 vector table prefix)
             cdata[31] = 0           # R
             cdata[32] = 1           # IFF = 1 (interrupts enabled — our IM2 handler handles them)
@@ -162,7 +162,7 @@ def build_szx():
     print(f"\nWrote {OUT}  ({len(out):,} bytes)")
     print(f"  Machine : Spectrum 128")
     print(f"  PC      : ${gs:04X}  (GAME_START)")
-    print(f"  SP      : $BFF8")
+    print(f"  SP      : $BBFE")
     print(f"  $7FFD   : $07  (bank 7 at $C000)")
     print(f"  IFF     : 1   (IM2 pre-initialized — handler active from first instruction)")
     print(f"\nLoad in FUSE: File -> Open -> {OUT}")

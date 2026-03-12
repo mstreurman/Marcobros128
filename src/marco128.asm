@@ -4,7 +4,7 @@
 ; Inspired by classic 8-bit platformers of the 1980s.
 ; Assembler: sjasmplus (z00m fork)
 ; Build:     sjasmplus --nologo --lst=build/marco128.lst marco128.asm
-; Version:   0.2.0
+; Version:   0.3.0
 ; ============================================================
 
     DEVICE ZXSPECTRUM128
@@ -111,6 +111,9 @@ NOTE_C6         EQU 106
 NOTE_D6         EQU  94
 NOTE_E6         EQU  84
 NOTE_G6         EQU  71
+NOTE_Bb4        EQU 238     ; Bb4 / A#4 = 466 Hz
+NOTE_Eb5        EQU 178     ; Eb5 / D#5 = 622 Hz
+NOTE_B5         EQU 112     ; B5  = 988 Hz
 
 ; ============================================================
 ; BANK 2 — FIXED ENGINE ($8000–$BFFF)
@@ -123,7 +126,7 @@ NOTE_G6         EQU  71
     ld a, 2
     out ($FE), a
     jp GAME_START
-    DEFB "MB128 v0.2.0", 0   ; version tag in binary
+    DEFB "MB128 v0.4.4", 0   ; version tag in binary
 
 ; ============================================================
 ; GAME VARIABLES  ($8003 onwards)
@@ -202,12 +205,16 @@ level_map_cache: DS MAP_W * MAP_H, 0
 ; ============================================================
 GAME_START:
     di
-    ld sp, $BFF8
+    ld sp, $BBFE   ; Fix 26d: Stack in free gap ($841D-$BBFF) between LoadEnemySpawns
+                   ; and HANDLER. Gap = 14307 bytes of DS-padded zeros, never executed.
+                   ; Max stack depth ~128 bytes → reaches ~$BB7E, clear of code at $841C.
+                   ; Previous $BF00 let stack reach $BEE8, inside MUSIC_OVERWORLD ($BE55).
     ; Mark 128K paging as available (this is a 128K-only binary)
     ld a, 1
     ld (bankswitch_ok), a
+    call Setup_IM2       ; MUST run first: sets IM2 + EI so ClearScreen's
+                         ; own EI fires into our handler, not IM0. (Fix 25c)
     call ClearScreen
-    call Setup_IM2
     call AY_Silence
     jp MainLoop
 
@@ -264,6 +271,19 @@ LoadLevelMap:
     ldir
     ret
 
+DoLevelBanking:
+    ; Called from InitLevel (bank7). MUST live in bank2 (fixed).
+    ; Pages in the level bank, loads map + spawns to bank2 caches, restores bank7.
+    ; Call convention: bank number already in cur_level_bank; level_num already set.
+    ; (Fix 25d: recreated bank2 shim — bank7 cannot call BankSwitch directly.)
+    ld a, (cur_level_bank)
+    call BankSwitch          ; pages out bank7 — safe because we are in bank2
+    call LoadLevelMap        ; reads from paged bank into level_map_cache (bank2)
+    call LoadEnemySpawns     ; reads spawn table into entity arrays (bank2)
+    ld a, 7
+    call BankSwitch          ; restore bank7
+    ret
+
 LoadEnemySpawns:
     ; Spawn table base: $C000 + 3*MAP_W*MAP_H, then +32 per level
     ld hl, $C000 + 3 * MAP_W * MAP_H
@@ -294,18 +314,28 @@ LoadEnemySpawns:
     pop hl
 
     inc hl
-    ld a, (hl)
-    add a, a
-    add a, a
-    add a, a
-    add a, a
-    push hl
-    ld hl, ent_xl
+    ; Fix 26c: 16-bit tile_x * 16. Previous code used 8-bit ADD A,A four times;
+    ; tile_x >= 16 (e.g. tile 24*16=384=$180) overflowed, truncating to 8 bits.
+    ; Use HL for full 16-bit result, store low byte to ent_xl, high to ent_xh.
+    ld a, (hl)          ; tile_x (0..63)
+    push hl             ; save spawn table pointer
+    ld l, a
+    ld h, 0             ; HL = tile_x
+    add hl, hl          ; *2
+    add hl, hl          ; *4
+    add hl, hl          ; *8
+    add hl, hl          ; *16  → pixel_x (0..1008, needs 2 bytes)
     ld d, 0
     ld e, c
+    push hl             ; save pixel_x
+    ld hl, ent_xl
     add hl, de
-    ld (hl), a
-    pop hl
+    pop bc              ; B = pixel_x high byte, C = pixel_x low byte
+    ld (hl), c          ; ent_xl[idx] = low byte
+    ld hl, ent_xh
+    add hl, de
+    ld (hl), b          ; ent_xh[idx] = high byte
+    pop hl              ; restore spawn table pointer
 
     inc hl
     ld a, (hl)
@@ -383,9 +413,10 @@ HANDLER:
     jr nz, .joy_real
     xor a   ; no joystick connected, zero
 .joy_real:
-    ; Map keyboard to joystick bits: Space=$BFFE b0 = fire (bit 4 of joy)
+    ; Map keyboard to joystick bits: Space=$7FFE b0 = fire (bit 4 of joy)
+    ; Fix 26b: was $BF (port $BFFE = Enter row). $7F = port $7FFE = Space row.
     push af
-    ld a, $BF
+    ld a, $7F
     in a, ($FE)
     bit 0, a         ; Space key (active low)
     jr nz, .no_space
@@ -423,6 +454,17 @@ HANDLER:
     pop de
     pop bc
     pop af
+    ; Fix 26a: EI is required before RETI.
+    ; DI at handler entry zeros BOTH IFF1 and IFF2. RETI only copies IFF2 back
+    ; to IFF1 — it does NOT re-enable interrupts by itself. Without EI, after
+    ; the first few startup interrupts complete, IFF1 stays 0 permanently.
+    ; HALT then spins forever (loops as NOP with interrupts off), joy_new never
+    ; updates, and the title screen never exits.
+    ; EI immediately before RETI is the standard Z80 pattern and is safe: the
+    ; Z80 guarantees at least one instruction executes after EI before an
+    ; interrupt can be taken — RETI counts as that instruction, so there is no
+    ; nested-interrupt window. (Fix 25a concern is resolved: the window only
+    ; opens when EI and RETI are NOT adjacent.)
     ei
     reti
 
@@ -734,68 +776,79 @@ SFX_DATA_LVLEND:
 ; ============================================================
 ; MUSIC DATA
 ; ============================================================
+; ============================================================
+; MUSIC DATA — all tunes are original compositions.
+; Fix 30: previous tracks were the SMB1 overworld/underground/title themes,
+; which are copyright Nintendo. Replaced with original material.
+;
+; Format per note: period_lo, period_hi, vol_A, vol_B, vol_C, duration
+; period = AY period for desired pitch (AY clock 1,773,400 Hz)
+; vol 0..15 (0=silent); duration in 50Hz frames; $FF,$FF = loop
+; ============================================================
+
+; MUSIC_OVERWORLD — original upbeat D-major loop
+;   Phrase A: D5 F#5 A5 D6 | A5 F#5 D5 rest
+;   Phrase B: G5 B5 D6  B5 | A5 G5  F#5 rest  (loop)
+;   NOTE_F5 used as F#5 approximation (close enough on AY at this tempo)
 MUSIC_OVERWORLD:
-    DEFB low NOTE_E5,  high NOTE_E5,  12, 0, 0,  4
+    DEFB low NOTE_D5,  high NOTE_D5,  11, 0, 0,  4   ; D5
+    DEFB low NOTE_F5,  high NOTE_F5,  12, 0, 0,  4   ; F5 (~F#5)
+    DEFB low NOTE_A5,  high NOTE_A5,  13, 0, 0,  4   ; A5
+    DEFB low NOTE_D6,  high NOTE_D6,  14, 0, 0,  6   ; D6
     DEFB low NOTE_REST,0,               0, 0, 0,  2
-    DEFB low NOTE_E5,  high NOTE_E5,  12, 0, 0,  4
-    DEFB low NOTE_REST,0,               0, 0, 0,  2
-    DEFB low NOTE_C5,  high NOTE_C5,  12, 0, 0,  4
-    DEFB low NOTE_E5,  high NOTE_E5,  12, 0, 0,  6
-    DEFB low NOTE_G5,  high NOTE_G5,  12, 0, 0,  8
-    DEFB low NOTE_G4,  high NOTE_G4,   8, 0, 0,  8
-    DEFB low NOTE_C5,  high NOTE_C5,  12, 0, 0,  8
-    DEFB low NOTE_G4,  high NOTE_G4,  10, 0, 0,  6
+    DEFB low NOTE_A5,  high NOTE_A5,  13, 0, 0,  4   ; A5
+    DEFB low NOTE_F5,  high NOTE_F5,  12, 0, 0,  4   ; F5
+    DEFB low NOTE_D5,  high NOTE_D5,  11, 0, 0,  6   ; D5
     DEFB low NOTE_REST,0,               0, 0, 0,  4
-    DEFB low NOTE_E4,  high NOTE_E4,  10, 0, 0,  8
-    DEFB low NOTE_A4,  high NOTE_A4,  12, 0, 0,  6
-    DEFB low NOTE_B4,  high NOTE_B4,  12, 0, 0,  4
-    DEFB low NOTE_A4,  high NOTE_A4,  11, 0, 0,  4
-    DEFB low NOTE_A4,  high NOTE_A4,  12, 0, 0,  6
-    DEFB low NOTE_G4,  high NOTE_G4,  11, 0, 0,  5
-    DEFB low NOTE_E5,  high NOTE_E5,  12, 0, 0,  5
-    DEFB low NOTE_G5,  high NOTE_G5,  12, 0, 0,  5
-    DEFB low NOTE_A5,  high NOTE_A5,  12, 0, 0,  6
-    DEFB low NOTE_F5,  high NOTE_F5,  11, 0, 0,  5
-    DEFB low NOTE_G5,  high NOTE_G5,  10, 0, 0,  4
+    DEFB low NOTE_G5,  high NOTE_G5,  12, 0, 0,  4   ; G5
+    DEFB low NOTE_B5,  high NOTE_B5,  13, 0, 0,  4   ; B5
+    DEFB low NOTE_D6,  high NOTE_D6,  14, 0, 0,  4   ; D6
+    DEFB low NOTE_B5,  high NOTE_B5,  13, 0, 0,  6   ; B5
     DEFB low NOTE_REST,0,               0, 0, 0,  2
-    DEFB low NOTE_E5,  high NOTE_E5,  12, 0, 0,  6
-    DEFB low NOTE_C5,  high NOTE_C5,  12, 0, 0,  4
-    DEFB low NOTE_D5,  high NOTE_D5,  11, 0, 0,  4
-    DEFB low NOTE_B4,  high NOTE_B4,  10, 0, 0,  6
+    DEFB low NOTE_A5,  high NOTE_A5,  13, 0, 0,  4   ; A5
+    DEFB low NOTE_G5,  high NOTE_G5,  12, 0, 0,  4   ; G5
+    DEFB low NOTE_F5,  high NOTE_F5,  11, 0, 0,  4   ; F5
+    DEFB low NOTE_D5,  high NOTE_D5,  10, 0, 0,  8   ; D5 (long)
+    DEFB low NOTE_REST,0,               0, 0, 0,  4
     DEFB $FF, $FF
 
+; MUSIC_BOSS — original tense A-minor phrase
+;   Driving staccato feel, minor tonality, clearly different from anything Nintendo
 MUSIC_BOSS:
-    DEFB low NOTE_A4,  high NOTE_A4,  13, 0, 0,  3
+    DEFB low NOTE_A4,  high NOTE_A4,  14, 0, 0,  2   ; A4 short
     DEFB low NOTE_REST,0,               0, 0, 0,  1
-    DEFB low NOTE_A4,  high NOTE_A4,  13, 0, 0,  3
+    DEFB low NOTE_C5,  high NOTE_C5,  13, 0, 0,  2   ; C5
     DEFB low NOTE_REST,0,               0, 0, 0,  1
-    DEFB low NOTE_A4,  high NOTE_A4,  13, 0, 0,  3
-    DEFB low NOTE_A5,  high NOTE_A5,  14, 0, 0,  3
-    DEFB low NOTE_G5,  high NOTE_G5,  12, 0, 0,  4
-    DEFB low NOTE_F5,  high NOTE_F5,  11, 0, 0,  4
-    DEFB low NOTE_E5,  high NOTE_E5,  13, 0, 0,  4
+    DEFB low NOTE_Eb5, high NOTE_Eb5, 12, 0, 0,  3   ; Eb5 (tritone)
     DEFB low NOTE_REST,0,               0, 0, 0,  2
-    DEFB low NOTE_C5,  high NOTE_C5,  12, 0, 0,  3
-    DEFB low NOTE_E5,  high NOTE_E5,  13, 0, 0,  4
-    DEFB low NOTE_D5,  high NOTE_D5,  12, 0, 0,  3
-    DEFB low NOTE_D5,  high NOTE_D5,  13, 0, 0,  5
+    DEFB low NOTE_D5,  high NOTE_D5,  11, 0, 0,  2   ; D5
+    DEFB low NOTE_C5,  high NOTE_C5,  12, 0, 0,  2   ; C5
+    DEFB low NOTE_B4,  high NOTE_B4,  13, 0, 0,  4   ; B4
+    DEFB low NOTE_REST,0,               0, 0, 0,  2
+    DEFB low NOTE_G4,  high NOTE_G4,  11, 0, 0,  2   ; G4
+    DEFB low NOTE_A4,  high NOTE_A4,  12, 0, 0,  2   ; A4
+    DEFB low NOTE_Bb4, high NOTE_Bb4, 14, 0, 0,  6   ; Bb4 (tension)
+    DEFB low NOTE_REST,0,               0, 0, 0,  3
     DEFB $FF, $FF
 
+; MUSIC_TITLE — original short rising fanfare in C major
+;   Steady ascending motif, clear and bright, original composition
 MUSIC_TITLE:
-    DEFB low NOTE_C5,  high NOTE_C5,  13, 0, 0,  4
-    DEFB low NOTE_C5,  high NOTE_C5,  13, 0, 0,  4
-    DEFB low NOTE_C5,  high NOTE_C5,  13, 0, 0,  4
-    DEFB low NOTE_C5,  high NOTE_C5,   0, 0, 0,  2
-    DEFB low NOTE_G4,  high NOTE_G4,  12, 0, 0,  4
-    DEFB low NOTE_G4,  high NOTE_G4,   0, 0, 0,  2
-    DEFB low NOTE_G4,  high NOTE_G4,  13, 0, 0,  8
+    DEFB low NOTE_C5,  high NOTE_C5,  12, 0, 0,  3   ; C5
+    DEFB low NOTE_D5,  high NOTE_D5,  12, 0, 0,  3   ; D5
+    DEFB low NOTE_E5,  high NOTE_E5,  13, 0, 0,  3   ; E5
+    DEFB low NOTE_G5,  high NOTE_G5,  13, 0, 0,  5   ; G5
+    DEFB low NOTE_REST,0,               0, 0, 0,  2
+    DEFB low NOTE_A5,  high NOTE_A5,  13, 0, 0,  3   ; A5
+    DEFB low NOTE_G5,  high NOTE_G5,  12, 0, 0,  3   ; G5
+    DEFB low NOTE_E5,  high NOTE_E5,  12, 0, 0,  3   ; E5
+    DEFB low NOTE_C5,  high NOTE_C5,  11, 0, 0,  3   ; C5
+    DEFB low NOTE_G4,  high NOTE_G4,  10, 0, 0,  5   ; G4
+    DEFB low NOTE_REST,0,               0, 0, 0,  3
+    DEFB low NOTE_C5,  high NOTE_C5,  13, 0, 0,  3   ; C5
+    DEFB low NOTE_E5,  high NOTE_E5,  13, 0, 0,  3   ; E5
+    DEFB low NOTE_G5,  high NOTE_G5,  14, 0, 0,  8   ; G5 long
     DEFB low NOTE_REST,0,               0, 0, 0,  4
-    DEFB low NOTE_E5,  high NOTE_E5,  13, 0, 0,  4
-    DEFB low NOTE_E5,  high NOTE_E5,   0, 0, 0,  2
-    DEFB low NOTE_E5,  high NOTE_E5,  13, 0, 0,  4
-    DEFB low NOTE_C5,  high NOTE_C5,  12, 0, 0,  4
-    DEFB low NOTE_E5,  high NOTE_E5,  13, 0, 0,  6
-    DEFB low NOTE_G5,  high NOTE_G5,  14, 0, 0, 10
     DEFB $FF, $FF
 
 ; ============================================================
@@ -950,7 +1003,8 @@ DrawCharXY_Real:
     ld a, e
     add a, $20
     ld e, a
-    jr nc, .dcxy_cont
+    ; Fix 28: same inverted carry as Fix 27 (DrawTile/DrawSprite). jr nc -> jr c.
+    jr c, .dcxy_cont
     ld a, d
     sub $08
     ld d, a
@@ -1305,7 +1359,10 @@ DrawTile:
     ld a, e
     add a, $20
     ld e, a
-    jr nc, .dt_cont
+    ; Fix 27: was 'jr nc' — logic was inverted.
+    ; No carry: char row advance stays within same third → D overshot by 8 → sub $08
+    ; Carry: E wrapped past char-row 7, moving to next third → D correct, skip
+    jr c, .dt_cont
     ld a, d
     sub $08
     ld d, a
@@ -1671,7 +1728,10 @@ SPR_BOSS2:
 
 ; ============================================================
 ; DRAW SPRITE — IX=data, B=screen_x, C=screen_y
-; OR-draws 16×16 pixels with sub-byte X shift
+; Fix 29: masked draw. For each byte: (screen AND ~pixel) OR pixel.
+; Sprite 0-pixels = transparent (background shows through).
+; Sprite 1-pixels = always drawn (foreground).
+; No extra mask data needed — mask derived from pixels on the fly.
 ; ============================================================
 DrawSprite:
     push hl
@@ -1740,25 +1800,40 @@ DrawSprite:
     dec a
     jr nz, .ds_shift
 
-    ld a, (hl)
+    ; Byte 0 (left): (screen AND ~B) OR B
+    ld a, b
+    cpl
+    and (hl)
     or b
     ld (hl), a
     inc hl
-    ld a, (hl)
+    ; Byte 1 (mid): (screen AND ~C) OR C
+    ld a, c
+    cpl
+    and (hl)
     or c
     ld (hl), a
     inc hl
-    ld a, (hl)
+    ; Byte 2 (overflow): (screen AND ~D) OR D
+    ld a, d
+    cpl
+    and (hl)
     or d
     ld (hl), a
     jr .ds_next
 
 .ds_no_shift:
-    ld a, (hl)
+    ; Byte 0: (screen AND ~B) OR B
+    ld a, b
+    cpl
+    and (hl)
     or b
     ld (hl), a
     inc hl
-    ld a, (hl)
+    ; Byte 1: (screen AND ~C) OR C
+    ld a, c
+    cpl
+    and (hl)
     or c
     ld (hl), a
 
@@ -1771,7 +1846,8 @@ DrawSprite:
     ld a, l
     add a, $20
     ld l, a
-    jr nc, .ds_rowok
+    ; Fix 27: was 'jr nc' — same inverted logic as DrawTile (see Fix 27 there).
+    jr c, .ds_rowok
     ld a, h
     sub $08
     ld h, a
@@ -2058,6 +2134,13 @@ GetTileAt:
     jp nc, .gta_solid
 
     ; offset = tile_y * MAP_W + tile_x
+    ; Fix 31: was 'ld de, level_map_cache / add hl, de / ld b,0 / ld c,e'
+    ; but ld de overwrites E (tile_x), so ld c,e loaded $A3 (low byte of
+    ; level_map_cache = $80A3) instead of tile_x. Every tile lookup was
+    ; 161 bytes past the intended position, always past the end of the cache,
+    ; reading random RAM. Ground tiles never detected → player fell through
+    ; floor → screen_y ≥ 177 → DrawSprite wrote into attr/sysvar area → crash.
+    ; Fix: use ld bc / add hl,bc which preserves DE (E still = tile_x).
     ld h, 0
     ld l, d
     add hl, hl
@@ -2066,10 +2149,10 @@ GetTileAt:
     add hl, hl
     add hl, hl
     add hl, hl             ; hl = tile_y * 64  (MAP_W=64)
-    ld de, level_map_cache
-    add hl, de
+    ld bc, level_map_cache
+    add hl, bc             ; hl = level_map_cache + tile_y*64 (E still = tile_x)
     ld b, 0
-    ld c, e
+    ld c, e                ; tile_x — E intact because we used BC not DE above
     add hl, bc
     ld a, (hl)
     jr .gta_done
@@ -2275,7 +2358,8 @@ UpdateEnemies:
     or a
     jp z, .uen_skip
 
-    ; Move by vx
+    ; Move by vx — Fix 26c: 16-bit movement
+    ; Step 1: ensure vx is initialised
     ld hl, ent_vx
     add hl, de
     ld a, (hl)
@@ -2283,37 +2367,87 @@ UpdateEnemies:
     jr nz, .uen_has_vx
     ld (hl), $FF            ; default: move left
 .uen_has_vx:
-    ld b, a             ; vx (signed: $FF = -1, $01 = +1)
+    ld b, a             ; B = vx (signed: $FF=-1, $01=+1)
 
+    ; Step 2: load 16-bit position into IX
+    ; Note: ld ixl,(hl) is illegal on Z80 — must go via A
     ld hl, ent_xl
     ld d, 0
     ld e, c
     add hl, de
     ld a, (hl)
-    add a, b
-    ld (hl), a          ; new ent_xl
+    ld ixl, a           ; IXL = ent_xl (low byte)
+    ld hl, ent_xh
+    add hl, de
+    ld a, (hl)
+    ld ixh, a           ; IXH = ent_xh (high byte)
 
-    ; Bounce at left/right map pixel limits (tile 0 / tile MAP_W-1)
-    cp 8                ; near left edge?
+    ; Step 3: add signed vx (B) to IX using 16-bit arithmetic
+    ; Sign-extend: if B bit7 set → negative, high extension = $FF; else $00
+    ld a, ixl
+    add a, b            ; low byte: IXL + vx (sets carry)
+    ld ixl, a
+    bit 7, b            ; test sign of vx
+    jr z, .uen_vx_pos
+    ; vx negative: adc IXH with $FF (= borrow propagation)
+    ld a, ixh
+    adc a, $FF
+    ld ixh, a
+    jr .uen_chk_left
+.uen_vx_pos:
+    ; vx positive: adc IXH with $00 (carry only)
+    ld a, ixh
+    adc a, 0
+    ld ixh, a
+
+.uen_chk_left:
+    ; Bounce: left edge pixel 8 → if IX < 8, reverse to rightward
+    ld a, ixh
+    or a
+    jr nz, .uen_chk_right   ; IXH != 0: x >= 256, not near left
+    ld a, ixl
+    cp 8
     jr nc, .uen_chk_right
-    ld b, 1             ; reverse to rightward
+    ; Hit left wall
     ld hl, ent_vx
     ld d, 0
     ld e, c
     add hl, de
-    ld (hl), b
+    ld (hl), 1
     jr .uen_post_move
+
 .uen_chk_right:
-    cp 240              ; right screen edge (8-bit limit: 15*16=240)
+    ; Right edge: pixel 992 = $03E0 (tile MAP_W-2 = 62, *16 = 992)
+    ld a, ixh
+    cp 4
+    jr nc, .uen_hit_right   ; IXH >= 4 → x >= 1024, past edge
+    cp 3
+    jr c, .uen_post_move    ; IXH < 3 → x < 768, safely inside
+    ; IXH == 3: check low byte >= $E0 ($03E0 = 992)
+    ld a, ixl
+    cp $E0
     jr c, .uen_post_move
-    ld b, $FF           ; reverse to leftward
+.uen_hit_right:
     ld hl, ent_vx
     ld d, 0
     ld e, c
     add hl, de
-    ld (hl), b
+    ld (hl), $FF
 
 .uen_post_move:
+    ; Step 4: store updated 16-bit position back
+    ; Note: ld (hl),ixl is illegal — must go via A
+    ld hl, ent_xl
+    ld d, 0
+    ld e, c
+    add hl, de
+    ld a, ixl
+    ld (hl), a          ; ent_xl = new low byte
+    ld hl, ent_xh
+    add hl, de
+    ld a, ixh
+    ld (hl), a          ; ent_xh = new high byte
+
     ; Animate
     ld hl, ent_anim_cnt
     ld d, 0
@@ -2337,7 +2471,8 @@ UpdateEnemies:
 .uen_skip:
     pop bc
     inc c
-    djnz .uen_loop
+    dec b               ; djnz replacement — loop body > 127 bytes, jr can't reach
+    jp nz, .uen_loop
 
     pop hl
     pop bc
@@ -2348,13 +2483,26 @@ CheckEnemyPlayer:
     push hl
     push bc
 
-    ld hl, ent_xl
+    ; Fix 26c: 16-bit X collision check.
+    ; Fast path: if ent_xh != plr_xh the entities are >256 pixels apart — no hit.
+    ld hl, ent_xh
     ld d, 0
     ld e, c
     add hl, de
-    ld a, (hl)
-    ld b, a             ; entity x
+    ld a, (hl)          ; ent_xh
 
+    ld hl, (plr_x)      ; HL = plr_x (16-bit DW)
+    sub h               ; ent_xh - plr_xh
+    jr nz, .cep_no      ; different pages → definitely no collision
+
+    ; Same 256-px page: compare low bytes only (sprites are 16 px wide)
+    ld hl, ent_xl
+    add hl, de
+    ld a, (hl)
+    ld b, a             ; entity x low
+
+    ld a, l             ; plr_x low byte (L was set by ld hl,(plr_x) above,
+                        ; but HL was clobbered by add hl,de — reload)
     ld a, (plr_x)       ; player world x lo
     sub b
     jp m, .cep_neg
@@ -2455,16 +2603,32 @@ DrawEnemies:
     or a
     jp z, .den_skip
 
-    ; screen_x = ent_xl[idx] - cam_x_lo
+    ; Fix 26c: 16-bit screen_x = ent_x - cam_x
+    ; Load ent_x low byte into B, high byte into A
     ld hl, ent_xl
     add hl, de
-    ld a, (hl)          ; ent_xl
-    ld b, a
-    ld a, (cam_x)       ; cam_x low byte
-    sub b               ; cam_x - ent_xl
-    neg                 ; ent_xl - cam_x  (screen x)
+    ld b, (hl)          ; B = ent_xl (low byte of entity world x)
+    ld hl, ent_xh
+    add hl, de
+    ld a, (hl)          ; A = ent_xh (high byte)
+    ; 16-bit subtract: (A:B) - cam_x
+    ld hl, (cam_x)      ; HL = cam_x (16-bit)
+    ld c, b             ; C = ent_xl (save before B reused)
+    ; Low byte: ent_xl - cam_xl (sets carry if borrow)
+    ld b, a             ; B = ent_xh
+    ld a, c             ; A = ent_xl
+    sub l               ; A = ent_xl - cam_xl
+    ld c, a             ; C = screen_x low byte
+    ; High byte: ent_xh - cam_xh - borrow
+    ld a, b             ; A = ent_xh
+    sbc a, h            ; A = ent_xh - cam_xh - borrow
+    jp c, .den_skip     ; negative: entity is left of camera
+    or a
+    jp nz, .den_skip    ; high byte > 0: screen_x >= 256, off right
+    ; screen_x = C (fits in 8 bits); must be < 240
+    ld a, c
     cp 240
-    jp nc, .den_skip    ; off screen (negative or > 239)
+    jp nc, .den_skip
 
     ld iyh, a           ; save screen_x in IYH
 
@@ -2954,13 +3118,10 @@ InitLevel:
 
     call SetLevelMapPtr
 
-    ; Page in level bank, copy map + spawns to bank2 caches, restore bank7
-    ld a, (cur_level_bank)
-    call BankSwitch
-    call LoadLevelMap        ; copy map to level_map_cache
-    call LoadEnemySpawns     ; copy spawns to ent arrays
-    ld a, 7
-    call BankSwitch          ; restore bank7
+    ; DoLevelBanking lives in bank2 (fixed) — it pages in the level bank,
+    ; copies map+spawns to bank2 caches, then restores bank7.
+    ; CRITICAL: cannot call BankSwitch directly here (bank7 suicide). (Fix 25d)
+    call DoLevelBanking
 
     ld a, (level_num)
     cp 2
@@ -3249,6 +3410,7 @@ W1L2_MAP:
     ; Floor
     DEFB 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
     DEFB 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+    DS (MAP_W*MAP_H - ($-W1L2_MAP)), 0   ; pad to 704 bytes (Fix 25e: was missing)
 
 W1L3_MAP:
     ; Castle boss arena
@@ -3272,16 +3434,16 @@ W1_SPAWNS:
     DEFB ENT_WALKER,36, 9
     DEFB ENT_SHELLER, 44, 9
     DEFB $FF
-    DS 26, 0
+    DS 16, 0    ; 5×3+1=16 used, 32-16=16 pad (Fix 25f)
     DEFB ENT_WALKER, 8, 9
     DEFB ENT_WALKER,14, 9
     DEFB ENT_SHELLER, 20, 9
     DEFB ENT_WALKER,30, 9
     DEFB $FF
-    DS 28, 0
+    DS 19, 0    ; 4×3+1=13 used, 32-13=19 pad (Fix 25f)
     DEFB ENT_BOSS, 48, 7
     DEFB $FF
-    DS 30, 0
+    DS 28, 0    ; 1×3+1=4 used, 32-4=28 pad (Fix 25f)
 
 ; ============================================================
 ; BANK 1 — WORLD 2 DATA
@@ -3334,12 +3496,12 @@ W2L3_MAP:
 W2_SPAWNS:
     DEFB ENT_WALKER, 8, 9 : DEFB ENT_SHELLER,14, 9 : DEFB ENT_WALKER,20, 9
     DEFB ENT_SHELLER, 28, 9 : DEFB ENT_WALKER,36, 9 : DEFB $FF
-    DS 26, 0
+    DS 16, 0    ; 5×3+1=16 used, 32-16=16 pad (Fix 25f)
     DEFB ENT_SHELLER,  4, 9 : DEFB ENT_WALKER,10, 9 : DEFB ENT_SHELLER,18, 9
     DEFB ENT_WALKER,22, 9 : DEFB ENT_SHELLER, 30, 9 : DEFB $FF
-    DS 26, 0
+    DS 16, 0    ; 5×3+1=16 used, 32-16=16 pad (Fix 25f)
     DEFB ENT_BOSS, 48, 7 : DEFB $FF
-    DS 30, 0
+    DS 28, 0    ; 1×3+1=4 used, 32-4=28 pad (Fix 25f)
 
 ; ============================================================
 ; BANK 3 — WORLD 3 DATA
@@ -3393,12 +3555,12 @@ W3_SPAWNS:
     DEFB ENT_WALKER, 4, 9 : DEFB ENT_SHELLER, 8, 9 : DEFB ENT_WALKER,14, 9
     DEFB ENT_SHELLER, 20, 9 : DEFB ENT_WALKER,26, 9 : DEFB ENT_SHELLER,32, 9
     DEFB $FF
-    DS 25, 0
+    DS 13, 0    ; 6×3+1=19 used, 32-19=13 pad (Fix 25f)
     DEFB ENT_SHELLER,  4, 9 : DEFB ENT_SHELLER,10, 9 : DEFB ENT_WALKER,16, 9
     DEFB ENT_SHELLER, 22, 9 : DEFB ENT_WALKER,28, 9 : DEFB $FF
-    DS 26, 0
+    DS 16, 0    ; 5×3+1=16 used, 32-16=16 pad (Fix 25f)
     DEFB ENT_BOSS, 50, 8 : DEFB $FF
-    DS 30, 0
+    DS 28, 0    ; 1×3+1=4 used, 32-4=28 pad (Fix 25f)
 
     ; Output raw bank binaries for the Python Z80 snapshot builder
     PAGE 2
