@@ -1,0 +1,20 @@
+CHANGELOG — make_szx.py
+=======================
+
+0.4.0 — 2026-03-12
+  Updated GAME_START signature from DI+LD SP,$BF00 (F3 31 00 BF) to DI+LD SP,$BBFE (F3 31 FE BB) to match Fix 26d stack relocation.
+  Updated Z80R chunk SP initial value from $BF00 to $BBFE.
+
+0.3.0 — 2026-03-11
+  Updated GAME_START signature from DI+LD SP,$BFF8 (F3 31 F8 BF)
+  to DI+LD SP,$BF00 (F3 31 00 BF) to match Fix 25b stack move.
+  Updated Z80R chunk SP initial value from $BFF8 to $BF00.
+
+0.2.0 — 2026-03-11
+  No changes this session. Version bumped to match marco128.asm.
+
+0.1.0 — Previous session
+  Initial version. Reads bank*.bin, injects IM2 table into bank5,
+  writes JP $BC00 at $BCBC in bank2, patches Z80 registers and SPCR
+  for correct 128K snapshot state. Detects GAME_START via DI+LD SP
+  signature search in bank2.bin.

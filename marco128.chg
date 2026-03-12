@@ -1,0 +1,43 @@
+CHANGELOG — marco128.asm
+========================
+
+0.4.4 — 2026-03-12
+  Fix 31: Replaced ld de,level_map_cache with ld bc,level_map_cache in GetTileAt to stop DE clobbering tile_x in E.
+
+0.4.3 — 2026-03-12
+  Fix 28: Corrected jr nc→jr c in DrawCharXY_Real screen row-advance (same inverted carry bug as Fix 27).
+  Fix 29: DrawSprite now uses (screen AND ~pixel) OR pixel masking for transparent sprite backgrounds.
+  Fix 30: Replaced Nintendo SMB1 music tracks (copyright) with three original AY-3-8912 compositions.
+
+0.4.2 — 2026-03-12
+  Fix 27: Corrected inverted jr nc→jr c in DrawTile and DrawSprite screen row-advance logic.
+
+0.4.1 — 2026-03-12
+  Fixed illegal ld ixl/ixh,(hl) in UpdateEnemies — routed via A register.
+  Fixed djnz .uen_loop out-of-range — replaced with dec b / jp nz.
+
+0.4.0 — 2026-03-12
+  Fix 26a: Added EI before RETI in HANDLER; DI zeros IFF2 so RETI alone never re-enables interrupts.
+  Fix 26b: Changed keyboard scan from $BF (Enter row) to $7F (Space row $7FFE).
+  Fix 26c: Rewrote enemy X as 16-bit across LoadEnemySpawns, UpdateEnemies, DrawEnemies, CheckEnemyPlayer.
+  Fix 26d: Moved SP from $BF00 to $BBFE (free gap $841D-$BBFF); $BF00 let stack reach into MUSIC_OVERWORLD.
+
+0.3.0 — 2026-03-11
+  Fix 25a: Removed explicit EI before RETI in interrupt handler to prevent nested-interrupt stack corruption.
+  Fix 25b: Moved stack base from $BFF8 to $BF00 to keep handler push depth clear of ClearScreen code.
+  Fix 25c: Swapped order in GAME_START — Setup_IM2 now runs before ClearScreen to avoid IM0 interrupt race.
+  Fix 25d: Restored DoLevelBanking shim in bank2 to prevent InitLevel suiciding its own bank.
+  Fix 25e: Added DS padding to W1L2_MAP to fix 256-byte layout shift that misplaced W1_SPAWNS.
+  Fix 25f: Corrected DS padding in all 9 spawn slots across W1/W2/W3 from 42-byte to correct 32-byte.
+
+0.2.0 — 2026-03-11
+  Fix 24: Removed turbo loader block (ORG $BD00) that was silently overwriting SFX_Play and SFX_Tick.
+
+0.1.4 — 2026-03-11
+  Fix 23b: Pinned DrawCharXY trampoline with ORG $BFFD to prevent bank boundary overflow.
+
+0.1.3 — 2026-03-11
+  Fix 23a: Added DI/EI wrapper to ClearScreen to protect against interrupt mid-LDIR stack corruption.
+
+0.1.2 — Previous session
+  Fix 22: Corrected Space key scan row from $BFFE to $7FFE.
