@@ -1,9 +1,6 @@
 *.bin
-*.lst
 __pycache__/
 *.pyc
 marco128.asm
 sjasmplus
 build/*.bin
-build/*.lst
-build/*.szx.bak
