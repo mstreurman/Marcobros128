@@ -71,3 +71,40 @@ CHANGELOG — changelog.chg
 
 0.1.0 — Previous session
   Initial working build.
+
+0.5.0 — 2026-03-12
+  Fix 32: DrawPlayer uses 16-bit sbc hl,de for screen_x instead of 8-bit (plr_x).
+  Fix 33: GetTileAt now accepts HL=pixel_x (16-bit); pushes/pops BC to preserve caller B.
+  Fix 34: Added CheckWalls routine; called from UpdatePlayer after applying vx.
+  Fix 35: DrawEnemies djnz replaced with dec b / jp nz (loop body > 127 bytes).
+  Fix 36: Removed redundant InitLevel call in mg_respawn (mg_level already calls it).
+  Fix 37: IsSolid removed ld a,1/or a — A now preserved so CheckCeiling QBlock detection works.
+  Fix 38: DrawPowerup uses 16-bit sbc hl,de for screen_x instead of 8-bit cam_x.
+  Fix 39: QBlockHit and stomp score addition now propagate BCD carry to next byte.
+  Fix 40: DrawHUD now shows 4 BCD score digits (score[1]:score[0]) instead of 2.
+
+0.6.0 — 2026-03-12
+  Fix 41: Hybrid ROM font — DrawCharXY_Real now uses ROM 1 ($3D00) for ASCII 32-127 and FONT_DATA for custom chars 128-255.
+  Fix 41: GAME_START initialises BANKM sysvar ($5B5C) to $17 so BankSwitch preserves ROM 1 bit on every page.
+  Fix 41: FONT_DATA ASCII 32-127 data deleted — 520 bytes freed from bank 2 ($8E00-$9007).
+
+0.6.1 — 2026-03-13
+  Fix 42a: CheckWalls right-probe jr z,.cw_done → jp z (target was +143 bytes, exceeds ±127 jr range).
+  Fix 42b: CheckEnemyPlayer jr nz,.cep_no → jp nz (target was +128 bytes, exceeds ±127 jr range).
+
+0.6.5 — 2026-03-14
+  Fix 46: CheckWalls entry jr z,.cw_done → jp z — target $C7F3 is +144 bytes from $C761, exceeds ±127 jr range. Identical class of bug to Fix 42a at line 2386 in the same routine.
+
+0.6.6 — 2026-03-14
+  Fix 47: RenderLevel now skips call DrawTile entirely for AIR tiles (tile_id=0) using or a / jp z. Saves ~900 T-states per air cell per frame. W1L1 has ~120 air tiles visible per frame = ~108K T-states saved per frame loop (>50% reduction on typical screens).
+  Fix 48: LoadEnemySpawns spawn Y now uses tile_y*16 - PLR_H instead of tile_y*16. Enemies spawned at tile_y=9 now have top-of-sprite at y=130 (feet at y=144 = top of ground row 9) instead of spawning body-deep inside the ground.
+
+0.6.7 — 2026-03-14
+  Fix 49: Added screen_y >= 177 clamp before every call DrawSprite in DrawPlayer, DrawEnemies, and DrawPowerup. screen_y >= 177 causes the 16th sprite row (y+15 = 192+) to map to $5800 (attr/sysvar area) via the Spectrum pixel address formula, corrupting memory and crashing to 48K BASIC with interrupts permanently disabled. Root cause: player/enemy Y not bounded before draw call; plr_y can reach 177-191 between a gravity step and the CheckGround snap on the next frame.
+
+0.6.8 — 2026-03-14
+  Fix 50: UpdateCamera missing push hl / push de at entry. The existing pop de / pop hl / ret at exit consumed UpdateCamera's own return address (into DE), UpdatePlayer's saved AF (into HL), then jumped to UpdatePlayer's saved BC as the program counter — a random address every frame. All crashes (display corruption, ROM1 execution, 48K BASIC reset, stuck AY note) traced back to this. Push order corrected: push hl / push de at entry matches pop de / pop hl at exit, restoring each register to its own saved value.
+
+0.7.7 — 2026-03-14
+  Fix 66: EraseSprite called with prev_sy=255 (Fix 62 sentinel) writes to $5Fxx (attr/sysvar area), corrupting BANKM at $5B5C and crashing to IM1 mode. Fix: skip EraseSprite in DrawPlayer and DrawEnemies when prev_sy==255. Added cp 255 / jr z guard before each EraseSprite call.
+  Fix 67: Keyboard bit assignments wrong since Fix 55. Spectrum $DF row ($DFFE) layout is bit4=Y, bit3=U, bit2=I, bit1=O, bit0=P. Code was reading bit4 for P (actually Y) and bit3 for O (actually U). No O/P input ever registered. Fixed: bit 0,a for P (right) and bit 1,a for O (left). Space ($7F row bit0) was already correct.

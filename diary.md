@@ -417,3 +417,293 @@ which is why tiles drew correctly — only the *collision* was broken.
 Fix: replace `ld de, level_map_cache / add hl, de` with
 `ld bc, level_map_cache / add hl, bc`. Using BC instead of DE leaves E
 untouched, so `ld c, e` immediately after correctly picks up `tile_x`.
+
+---
+
+## 2026-03-12 — v0.5.0: Nine Bugs, One Review Session
+
+Static analysis of the v0.4.4 codebase identified nine issues that would prevent the game from working correctly once the player moves past the first screen width (tile 16 / pixel 256).
+
+### The core problem: 8-bit truncation everywhere
+
+`plr_x` is a 16-bit `DW` (needed for a 64-tile wide map = 1024 pixels), but most code read it with `ld a, (plr_x)` — only the low byte. This affected:
+- **DrawPlayer**: screen_x = plr_x - cam_x was 8-bit. Once plr_x > 255, the sprite teleported. Fixed: `and a / sbc hl, de` 16-bit subtraction.
+- **GetTileAt**: accepted C=pixel_x (8-bit). Tile 16+ mapped to tile 0. Fixed: HL=pixel_x (16-bit), with H*16+L/16 tile extraction.
+- **CheckGround/CheckCeiling/CheckLevelEnd**: all passed low byte of plr_x to GetTileAt. Fixed as part of GetTileAt calling convention change.
+- **DrawPowerup**: same 8-bit cam_x read. Fixed: 16-bit sbc.
+
+GetTileAt's change to push/pop BC also fixed a secondary regression from Fix 31: using `ld bc, level_map_cache` inside GetTileAt was clobbering the caller's B register (pixel_y), making the ground snap in CheckGround use B=0 (top of screen) instead of the foot position.
+
+### Wall collision was completely absent
+
+There was no `CheckWalls` routine. The player could walk through any solid tile horizontally. Added a new `CheckWalls` called from `UpdatePlayer` after horizontal movement. Two probes per side (top and bottom of player), 16-bit snap to tile boundary.
+
+### IsSolid clobbered A — QBlock mechanic silently broken
+
+`IsSolid` ended with `ld a, 1 / or a` which overwrote the tile_id with 1. `CheckCeiling` then did `cp TILE_QBLOCK` (=3), which always failed (1 != 3). Q-blocks never triggered. Fixed: removed the dead `ld a, 1 / or a` — `cp TILE_FLAG` already leaves Z clear (NZ) for any solid tile, and A is now preserved.
+
+### Score BCD carry and display
+
+QBlockHit and stomp score both lacked carry propagation — overflow silently wrapped. Both now propagate carry to the next BCD byte. DrawHUD previously only displayed 2 digits (score[1]); now displays all 4 digits across score[1] and score[0].
+
+### DrawEnemies djnz out-of-range
+
+UpdateEnemies fixed its djnz in Fix 26c. DrawEnemies had the same structure (loop body > 127 bytes) but was missed. Changed to `dec b / jp nz`.
+
+### Double InitLevel on respawn
+
+`mg_respawn` called `InitLevel` then `jp .mg_level`, which calls `ShowLevelEntry` then `InitLevel` again. The first call was redundant. Removed.
+
+### Pending after this batch
+- Full gameplay test with scrolling levels (Fixes 32-34 untested)
+- Powerup x-coordinate is still 8-bit (pwrup_xl is a DB); powerups placed past tile 16 won't work
+
+---
+
+## 2026-03-12 — v0.6.0: ROM-Mapped Hybrid Font System (Fix 41)
+
+### The problem
+
+Bank 2 contained a 520-byte copy of the ZX Spectrum character font (ASCII 32-127, 65 chars × 8 bytes), assembled from `FONT_DATA` at `$8E00`. This was pure duplication — the identical bitmaps already exist in ROM 1 (the 48K BASIC ROM) at `$3D00`. Every byte was wasted RAM.
+
+### The solution
+
+**ROM 1 is permanently paged.** The 128K Spectrum has two ROMs selected by bit 4 of port `$7FFD` (0=ROM 0 / 128K editor, 1=ROM 1 / 48K BASIC). `BankSwitch` already preserved all bits except 0-2 (bank number) by reading `$5B5C` (BANKM sysvar), masking, ORing, and writing back. All that was needed was to ensure `$5B5C` starts at `$17` ($07 | $10) so bit 4 survives every bank switch automatically — no runtime switching or DI/EI needed.
+
+Three places needed updating:
+1. **`GAME_START`**: `ld a,$17 / ld ($5B5C),a` — seeds the sysvar before the first BankSwitch call.
+2. **`make_szx.py`**: SPCR sets `$7FFD = $17` (was `$07`), and `bank5[0x1B5C] = $17` pre-seeds the sysvar in the snapshot.
+3. **`DrawCharXY_Real`**: the font pointer block now branches:
+   - `A < 96` (char 32-127): `IX = $3D00 + A*8` — reads directly from ROM 1.
+   - `A >= 96` (char 128-255): `IX = FONT_DATA + (A-96)*8` — reads from bank 2 custom data.
+
+The `I` register stays at `$7E` throughout — only the memory map changes, not the interrupt vector.
+
+### Result
+
+520 bytes freed from bank 2 (`$8E00`-`$9007`). `FONT_DATA` label kept as an empty anchor for future custom tile chars. All existing `DrawCharXY` / `DrawString` calls produce identical output — the ROM 1 bitmaps are the same data that was in `FONT_DATA`.
+
+---
+
+## 2026-03-13 — v0.6.1: Build errors fixed (sjasmplus jr range)
+
+First actual build attempt against sjasmplus revealed two assembler errors. Both were `jr` instructions whose target labels were just outside the Z80's ±127 byte relative branch limit.
+
+- **CheckWalls** (`jr z, .cw_done`): offset was +143. The right-side bottom probe sits in the middle of the routine with `.cw_done` far below through the snap logic and left-side probe code.
+- **CheckEnemyPlayer** (`jr nz, .cep_no`): offset was +128 — exactly one byte over the limit. `.cep_no` sits at the very end of a long AABB + stomp/hurt chain.
+
+Both fixed with a simple `jr` → `jp`. `jp` is 3 bytes vs `jr`'s 2, but the difference is negligible and these are not hot-path tight loops.
+
+---
+
+## 2026-03-14 — v0.6.5: Another jr in the wrong trousers (Fix 46)
+
+Build error on first compile of v0.6.4: `jr z` at CheckWalls entry (+144 bytes to
+`.cw_done`). This is literally the same routine, same label, same class of bug as
+Fix 42a — just a different `jr z` two lines higher up, at line 2360 vs line 2386.
+
+Fix 42a had already converted the *second* `jr z` in CheckWalls. The *first* one
+at the very top of the routine (`vx = 0: not moving horizontally, skip`) was missed.
+
+One instruction change: `jr z` → `jp z`. Build should now be clean.
+
+---
+
+## 2026-03-14 — v0.6.6: The Slowdown and the Sunken Enemies (Fix 47 & 48)
+
+### What the profiler told us
+
+No crashes this time! But four symptoms: no visible input, floor flashing,
+enemies stuck in the floor, timer frozen. The profiler session was actually
+~15 seconds of title/entry screens plus about 61 seconds of gameplay at
+roughly **0.6 fps**. The game loop was completing ~39 iterations while the
+HANDLER fired 3,054 times during gameplay — meaning each visual frame took
+~80 interrupt periods = ~1.6 real seconds per game frame.
+
+### Root cause of slowness: RenderLevel drawing 176 × DrawTile every frame
+
+A typical W1L1 viewport has about 120 AIR tiles out of 176 total. DrawTile
+for any tile takes ~900 T-states (6 register pushes/pops, pixel address calc,
+16-row pixel blit, 4 attribute writes). 176 × 900T = **158,400 T-states** per
+`RenderLevel` call. The entire frame budget is 69,888 T-states. RenderLevel
+alone was costing 2.3× the frame budget every single call.
+
+### Fix 47: Skip AIR tiles in RenderLevel
+
+Two instructions added after `ld a,(hl)` (tile ID fetch):
+```asm
+or a           ; Z=1 if tile_id=0 (AIR)
+jp z, .rl_air_skip
+```
+AIR tiles are all-zero pixel data and ATTR_SKY attributes. ClearScreen already
+sets all attributes to ATTR_SKY before the level starts. There is nothing to
+draw. Skipping 120 DrawTile calls saves ~108,000 T-states — dropping
+RenderLevel cost from 158K to ~50K T-states. Combined with the rest of the
+game loop (~40K T-states), we're now comfortably inside the 69,888 frame budget.
+
+### Fix 48: Enemies were spawning body-deep in the ground
+
+Spawn data uses `tile_y=9` (the ground row). LoadEnemySpawns computed
+`ent_yl = tile_y * 16 = 144`. But tile row 9 starts at pixel y=144 — so the
+enemy's TOP was at y=144, meaning the entire 14-pixel sprite was INSIDE the
+ground row. Visually: enemy merged with the floor tiles and appeared "stuck".
+
+The player handles this because `CheckGround` snaps `plr_y` upward each frame
+(plr_y starts at 144 but immediately snaps to 130 = 9×16 - PLR_H = 130).
+Enemies have no `CheckGround` — they stay wherever they're placed.
+
+Fix: `sub PLR_H` after the `tile_y * 16` calculation. Enemies at `tile_y=9`
+now spawn at `ent_yl = 130`, body spanning y=130–143, feet touching the top
+of ground row 9 at y=144. They stand on the ground correctly.
+
+### Remaining known issues
+
+- Sprite ghosting (no background erase before redraw — existing known issue)
+- HUD attribute bleed (top 2 tile rows' colours overwritten — existing known issue)
+- Powerup x-coordinate still 8-bit (pwrup_xl DB — powerups past tile 16 broken)
+- Need fresh profiler run to verify frame rate is now acceptable
+
+---
+
+## 2026-03-14 — v0.6.7: The Invisible Wall at y=177 (Fix 49)
+
+### Symptom
+
+Level loads, player and enemy visible on the floor, music playing — then after
+a moment: display corruption, crash to 48K BASIC, last AY note stuck forever.
+This is the classic Spectrum attribute-area crash. Something wrote pixel data
+into `$5800+` (the colour attribute / sysvar region), corrupted the machine
+state, and the interrupt handler died mid-execution leaving `DI` set permanently
+(hence the stuck note — AY chip keeps playing, Z80 never wakes up again).
+
+### Root cause
+
+The ZX Spectrum pixel address formula wraps at row 192. Pixel row 192 maps to
+address `$5800` — the first byte of the attribute area. `DrawSprite` writes 2–3
+bytes per pixel row, 16 rows total. If `screen_y >= 177`, then the final pixel
+row lands at `screen_y + 15 >= 192`, straight into attributes and sysvars.
+
+`DrawPlayer` passed `C = ld a,(plr_y)` directly to `DrawSprite` with the
+comment "plr_y always fits in 8 bits: 0..175". That's true when everything
+is working — but between a gravity step increasing `plr_y` and the
+`CheckGround` snap correcting it on the NEXT frame, `plr_y` can pass through
+177–191 for a single frame. One frame is all it takes.
+
+`DrawEnemies` and `DrawPowerup` had the same unguarded pass-through.
+
+### The fix
+
+Three `cp 177 / jp nc` (or `ret nc` for DrawPowerup) guards added, one before
+each `call DrawSprite`. If `screen_y >= 177`, the sprite is simply not drawn
+that frame. The game continues; the entity is invisible for one frame at most.
+The guard is 3 bytes (`cp 177`) + 3 bytes (`jp nc`) = 6 bytes per site.
+All existing `jr` branches in the affected routines were verified to be
+unaffected (the insertions are after the label targets, not before them).
+
+### Why the stuck note?
+
+When `DrawSprite` wrote pixel bytes into `$5C00+` (the sysvar area), it
+corrupted `BANKM` at `$5B5C`, `ERR_SP` at `$5C3A`, and other Z80 state mirrors.
+The ROM's error handler was triggered, which called `$0008` (PRINT-A-2) in
+ROM1, which eventually executed a `DI` and entered the 48K BASIC editor.
+`DI` never paired with `EI`, so the AY chip kept playing the last note the
+music engine had written to the hardware registers before the crash.
+
+---
+
+## 2026-03-14 — v0.6.8: Two Pushes We Should Have Found Sooner (Fix 50)
+
+### The crash that kept crashing
+
+Fix 49 went in (screen_y clamp). Still crashed to 48K BASIC with stuck note.
+Same profiler signature: ROM1 `$11DC` and `$0E5C` running for hundreds of
+thousands of T-states. We went through everything — DrawTile, DrawSprite, 
+DrawHUD, the AY engine, gravity overflow, BANKM corruption paths. Nothing.
+
+Then I re-read architecture.md's B11 entry for `UpdateCamera`:
+
+> *"Has unbalanced pop de/pop hl before ret. DO NOT call directly from new
+> code outside of UpdatePlayer — stack behaviour is undefined."*
+
+This was documented as a **usage warning**, not a bug. But it IS a bug.
+
+### The stack trace
+
+When `call UpdateCamera` fires inside UpdatePlayer, the stack looks like:
+
+```
+[SP+0,1]  UpdateCamera return address  ← pop de consumes this (WRONG)
+[SP+2,3]  UpdatePlayer's saved AF      ← pop hl consumes this (WRONG)
+[SP+4,5]  UpdatePlayer's saved BC      ← ret jumps HERE (CRASH)
+[SP+6,7]  UpdatePlayer's saved HL
+```
+
+Every single frame the player was alive, `ret` from UpdateCamera jumped
+to whatever **BC** held when UpdatePlayer's caller invoked it. Random
+address. Non-deterministic destination. Every frame.
+
+### The fix
+
+```asm
+UpdateCamera:
+    push hl    ; ← new: matches pop hl at exit
+    push de    ; ← new: matches pop de at exit
+```
+
+Push order matters. `push hl / push de` puts HL at SP+2 and DE at SP+0.
+Then `pop de / pop hl / ret` correctly restores DE first (from SP+0), then
+HL (from SP+2), then pops the real return address into PC. Symmetric.
+
+An earlier draft had the pushes in the wrong order (`push de / push hl`),
+which would have cross-restored the registers. Harmless in this case since
+UpdateCamera clobbers both and UpdatePlayer overwrites HL immediately after
+the call — but wrong is wrong.
+
+### Lesson
+
+Architecture.md's B11 warning existed but framed the imbalance as a caller
+restriction. It should have been a bug report. The B11 contract for
+UpdateCamera has been updated to reflect the correct balanced state and
+document the push order explicitly.
+
+---
+
+## 2026-03-14 — v0.7.7: Two Bugs We Introduced (Fixes 66-67)
+
+### Fix 66 — The sentinel that ate the sysvars
+
+Fix 62 was meant to stop EraseSprite from flashing the top-left corner
+of the screen by initialising `prev_sy` to 255 instead of 0.
+
+The problem: `EraseSprite` with `screen_y=255` calculates:
+```
+H = $40 | (255 & $C0)>>3 | (255 & 7) = $40 | $18 | $07 = $5F
+```
+`$5F00` is in the attribute area. All 16 erase rows write to
+`$5Fxx`, `$58xx`, `$59xx`... including `$5B20`, `$5B40` which
+contain BANKM at `$5B5C`. The very first draw frame corrupts paging,
+the CPU drops to IM1 mode, and the game freezes with the floor flashing.
+
+Fix: add `cp 255 / jr z` sentinel check before EraseSprite in both
+DrawPlayer and DrawEnemies. If prev_sy is 255, skip the erase.
+The first actual draw stores the real screen position as prev, so
+erasing works correctly from frame 2 onwards.
+
+### Fix 67 — Reading Y and U instead of O and P
+
+The Spectrum keyboard matrix for port `$DFFE` (A[15:8]=`$DF`):
+
+```
+bit4=Y   bit3=U   bit2=I   bit1=O   bit0=P
+```
+
+Our code had `bit 4,a` for P and `bit 3,a` for O. We were reading
+Y and U — two keys nobody would ever press while playing a platformer.
+O and P never triggered. No left/right movement ever worked.
+
+The profiler showed `set 0,d` (P detected) and `set 1,d` (O detected)
+with zero hits across the entire session — completely invisible until
+we checked the matrix layout.
+
+Fixed: `bit 0,a` for P, `bit 1,a` for O. Space (`$7F` row `bit0`)
+was already correct and unchanged.

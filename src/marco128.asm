@@ -4,7 +4,7 @@
 ; Inspired by classic 8-bit platformers of the 1980s.
 ; Assembler: sjasmplus (z00m fork)
 ; Build:     sjasmplus --nologo --lst=build/marco128.lst marco128.asm
-; Version:   0.4.4
+; Version:   0.7.7
 ; ============================================================
 
     DEVICE ZXSPECTRUM128
@@ -126,7 +126,7 @@ NOTE_B5         EQU 112     ; B5  = 988 Hz
     ld a, 2
     out ($FE), a
     jp GAME_START
-    DEFB "MB128 v0.4.4", 0   ; version tag in binary
+    DEFB "MB128 v0.7.7", 0   ; version tag in binary
 
 ; ============================================================
 ; GAME VARIABLES  ($8003 onwards)
@@ -144,6 +144,12 @@ plr_dead:       DB 0
 plr_dead_timer: DB 0
 plr_big:        DB 0
 plr_inv_timer:  DB 0
+
+plr_prev_sx:    DB 0        ; CHANGED: Fix 53 — screen_x on previous drawn frame (for EraseSprite)
+plr_prev_sy:    DB 0        ; CHANGED: Fix 53 — screen_y on previous drawn frame (for EraseSprite)
+
+ent_prev_sx:    DS MAX_ENEMIES, 0   ; CHANGED: Fix 53 — prev screen_x per enemy
+ent_prev_sy:    DS MAX_ENEMIES, 0   ; CHANGED: Fix 53 — prev screen_y per enemy
 
 cam_x:          DW 0
 cam_max:        DW (MAP_W-SCREEN_TW)*TILE_PX
@@ -208,10 +214,16 @@ GAME_START:
     ld sp, $BBFE   ; Fix 26d: Stack in free gap ($841D-$BBFF) between LoadEnemySpawns
                    ; and HANDLER. Gap = 14307 bytes of DS-padded zeros, never executed.
                    ; Max stack depth ~128 bytes → reaches ~$BB7E, clear of code at $841C.
-                   ; Previous $BF00 let stack reach $BEE8, inside MUSIC_OVERWORLD ($BE55).
-    ; Mark 128K paging as available (this is a 128K-only binary)
+                   ; Previous $BF00 let stack reach $BEE8, inside MUSIC_OVERWORLD ($BE55).\n    ; Mark 128K paging as available (this is a 128K-only binary)
     ld a, 1
     ld (bankswitch_ok), a
+    ; Fix 41: Initialise BANKM sysvar ($5B5C) to $17 = ROM1(bit4) + bank7(bits0-2).
+    ; BankSwitch reads $5B5C, masks bits0-2, ORs in new bank, and writes the whole
+    ; byte back to port $7FFD — so bit4 is automatically preserved on every bank
+    ; switch as long as $5B5C is correct here.  This keeps ROM 1 (48K BASIC ROM)
+    ; permanently paged, giving DrawCharXY_Real access to the ROM font at $3D00.
+    ld a, $17
+    ld ($5B5C), a
     call Setup_IM2       ; MUST run first: sets IM2 + EI so ClearScreen's
                          ; own EI fires into our handler, not IM0. (Fix 25c)
     call ClearScreen
@@ -326,15 +338,17 @@ LoadEnemySpawns:
     add hl, hl          ; *8
     add hl, hl          ; *16  → pixel_x (0..1008, needs 2 bytes)
     ld d, 0
-    ld e, c
+    ld e, c             ; DE = entity_index
+    push bc             ; CHANGED: Fix 45 — save B=loop_counter, C=entity_index before pop bc clobbers them
     push hl             ; save pixel_x
     ld hl, ent_xl
     add hl, de
     pop bc              ; B = pixel_x high byte, C = pixel_x low byte
     ld (hl), c          ; ent_xl[idx] = low byte
     ld hl, ent_xh
-    add hl, de
+    add hl, de          ; DE still = entity_index (set before push bc)
     ld (hl), b          ; ent_xh[idx] = high byte
+    pop bc              ; CHANGED: Fix 45 — restore B=loop_counter, C=entity_index
     pop hl              ; restore spawn table pointer
 
     inc hl
@@ -342,11 +356,13 @@ LoadEnemySpawns:
     add a, a
     add a, a
     add a, a
-    add a, a
+    add a, a            ; A = tile_y * 16 (pixel Y of that tile row's top)
+    sub PLR_H           ; CHANGED: Fix 48 — place enemy feet at tile row top: y = tile_y*16 - height
+                        ; tile_y=9 → 144-14=130; enemy body spans y=130-143, standing on row 9 at y=144
     push hl
     ld hl, ent_yl
     ld d, 0
-    ld e, c
+    ld e, c             ; CHANGED: Fix 45 — C is now correctly entity_index (restored above)
     add hl, de
     ld (hl), a
 
@@ -360,8 +376,8 @@ LoadEnemySpawns:
     pop hl
 
     inc hl
-    inc c
-    djnz .les_loop
+    inc c               ; CHANGED: Fix 45 — C is now correctly entity_index (not pixel_x_low)
+    djnz .les_loop      ; CHANGED: Fix 45 — B is now correctly loop_counter (not pixel_x_high)
 .les_done:
     ret
 
@@ -401,31 +417,29 @@ HANDLER:
     dec (hl)
 .no_timer:
 
-    ; Read Kempston joystick. Port $1F floats to $FF with no joystick,
-    ; which would set all bits. Check keyboard row $7FFE (0-Space row)
-    ; bit 0 = Caps, bit 1 = Z, bit 2 = X, bit 3 = C, bit 4 = V
-    ; We use: up=$7FFE(V=b4), down/left/right from same, fire=Space($7FFE b0 of $BFFE)
-    ; Simple approach: AND joy read with keyboard - if no joystick, kbd takes over.
-    in a, ($1F)
-    and $1F
-    ; If all 5 bits set, likely no joystick (floating) - zero it out
-    cp $1F
-    jr nz, .joy_real
-    xor a   ; no joystick connected, zero
-.joy_real:
-    ; Map keyboard to joystick bits: Space=$7FFE b0 = fire (bit 4 of joy)
-    ; Fix 26b: was $BF (port $BFFE = Enter row). $7F = port $7FFE = Space row.
-    push af
-    ld a, $7F
+    ; Fix 67: Corrected keyboard matrix for $DF row.
+    ; $DF = port $DFFE. Bit layout: bit4=Y, bit3=U, bit2=I, bit1=O, bit0=P
+    ; Previous code used bit4=P and bit3=O — reading Y and U instead!
+    ; Port $7FFE (row $7F): bit0=Space (fire/jump) — unchanged, was correct.
+    ld d, 0                 ; CHANGED: Fix 67 — D accumulates joy_held bits
+
+    ld a, $DF               ; CHANGED: Fix 67 — port $DFFE
     in a, ($FE)
-    bit 0, a         ; Space key (active low)
-    jr nz, .no_space
-    pop af
-    or %00010000     ; set fire bit
-    jr .joy_done
-.no_space:
-    pop af
-.joy_done:
+    bit 0, a                ; CHANGED: Fix 67 — P key = bit0 (was bit4=Y, wrong!)
+    jr nz, .kbd_no_p
+    set 0, d                ; right bit
+.kbd_no_p:
+    bit 1, a                ; CHANGED: Fix 67 — O key = bit1 (was bit3=U, wrong!)
+    jr nz, .kbd_no_o
+    set 1, d                ; left bit
+.kbd_no_o:
+    ld a, $7F               ; port $7FFE: Space=bit0 (unchanged — was correct)
+    in a, ($FE)
+    bit 0, a                ; Space key (active low = fire/jump)
+    jr nz, .kbd_no_space
+    set 4, d                ; fire bit
+.kbd_no_space:
+    ld a, d                 ; A = complete joy_held byte
     ld (joy_held), a
     ld b, a
     ld a, (joy_prev)
@@ -497,14 +511,10 @@ AY_Silence:
     ld bc, $BFFD
     xor a
     out (c), a
-    ld hl, ay_buf
-    ld b, 14
-    xor a
-.clr:
-    ld (hl), a
-    inc hl
-    djnz .clr
-    ld a, $FF
+    ; Fix 58: removed ay_buf[0..13] zeroing loop (14 bytes) — redundant because
+    ; AY_WriteBuffer rewrites all 14 registers from ay_buf every HANDLER frame.
+    ; Only ay_buf[AY_MIXER] matters: $FF keeps mixer silent on next WriteBuffer call.
+    ld a, $FF               ; CHANGED: Fix 58 — keep only the mixer silent marker
     ld (ay_buf + AY_MIXER), a
     ret
 
@@ -948,20 +958,52 @@ DrawCharXY_Real:
     push ix
     push af
 
+    ; Reject control characters (< 32)
     sub 32
-    jp c, .dcxy_skip
-    cp 96
-    jp nc, .dcxy_skip
+    jp c, .dcxy_skip        ; char < 32: nothing to draw
 
+    ; A = char - 32 (range 0..223)
+    ; Split on original char value:
+    ;   char 32-127  (A  0..95): standard ASCII — ROM 1 font at $3D00
+    ;   char 128-255 (A 96..223): custom tiles  — FONT_DATA in bank2
+    ;
+    ; Fix 41: ROM 1 (48K BASIC ROM) is permanently paged via BANKM/BankSwitch.
+    ; $3D00 in ROM 1 = font bitmap for ASCII 32 (space).
+    ; Formula: ptr = $3D00 + (char-32)*8  =  $3D00 + A*8
+    ; No DI/EI or runtime page-switching needed — ROM 1 is always present.
+    ;
+    ; FONT_DATA (bank2, $8E00+) holds bitmaps for custom chars 128-255.
+    ; Formula: ptr = FONT_DATA + (char-128)*8  =  FONT_DATA + (A-96)*8
+
+    cp 96
+    jr nc, .dcxy_custom
+
+    ; ── Standard ASCII 32-127 ── ROM 1 font ──────────────────────────────
     ld l, a
     ld h, 0
     add hl, hl
     add hl, hl
-    add hl, hl
-    ld de, FONT_DATA
-    add hl, de
+    add hl, hl              ; HL = (char-32) * 8
+    ld de, $3D00            ; ROM 1 font base (48K BASIC ROM)
+    add hl, de              ; HL = $3D00 + (char-32)*8
     push hl
     pop ix
+    jr .dcxy_draw
+
+.dcxy_custom:
+    ; ── Custom char 128-255 ── FONT_DATA ─────────────────────────────────
+    sub 96                  ; A = char - 128  (0..127)
+    ld l, a
+    ld h, 0
+    add hl, hl
+    add hl, hl
+    add hl, hl              ; HL = (char-128) * 8
+    ld de, FONT_DATA
+    add hl, de              ; HL = FONT_DATA + (char-128)*8
+    push hl
+    pop ix
+
+.dcxy_draw:
 
     ld a, c
     add a, a
@@ -1469,6 +1511,8 @@ RenderLevel:
     ld b, 0
     add hl, bc
     ld a, (hl)              ; tile ID
+    or a                    ; CHANGED: Fix 47 — test for AIR (tile 0); sets Z, preserves A
+    jp z, .rl_air_skip      ; CHANGED: Fix 47 — AIR = all-zero pixels+SKY attr already set by ClearScreen
 
     ; Screen pixel X = col * 16
     push af
@@ -1490,6 +1534,7 @@ RenderLevel:
     pop af
     call DrawTile
 
+.rl_air_skip:               ; CHANGED: Fix 47 — AIR skip target; non-AIR falls through here too
     inc iyl
     jp .rl_colloop
 
@@ -1737,7 +1782,7 @@ DrawSprite:
     push hl
     push de
     push bc
-    push ix
+    push ix                 ; CHANGED: Fix 65 — removed push/pop iy and ds_save coord writes
 
     ; Shift = B & 7
     ld a, b
@@ -1855,9 +1900,10 @@ DrawSprite:
     pop bc
     djnz .ds_row
 
-    pop ix
-    pop bc
-    pop de
+    pop ix                  ; CHANGED: Fix 65 — removed attr write (Fix 56/63): redundant+crashing
+    pop bc                  ; ClearScreen sets ATTR_SKY for all cells at level start;
+    pop de                  ; RenderLevel restores solid tile attrs every frame.
+                            ; Fix 63's 3-col write overflowed into adjacent rows near right edge.
     pop hl
     ret
 
@@ -2051,6 +2097,9 @@ UpdatePlayer:
 .up_x_done:
     ld (plr_x), hl
 
+    ; Fix 34: Check horizontal tile collision after applying vx
+    call CheckWalls
+
     ; Apply vy to plr_y
     ld hl, (plr_y)
     ld a, (plr_vy)
@@ -2104,20 +2153,36 @@ UpdatePlayer:
 ; TILE COLLISION HELPERS
 ; ============================================================
 
-; GetTileAt: C=world_pixel_x, B=world_pixel_y → A=tile_id
-; Level bank must be paged in
+; GetTileAt: HL=world_pixel_x (16-bit), B=world_pixel_y → A=tile_id
+; Fix 33: changed from C=pixel_x (8-bit) to HL=pixel_x (16-bit) so the full
+; x coordinate is used. Tiles 16+ (x >= 256) were silently truncated before.
+; Also pushes/pops BC so caller's B (pixel_y) survives — Fix31 changed
+; the cache address to use BC which clobbered B, breaking cg_snap in CheckGround.
 GetTileAt:
     ; Reads from level_map_cache in bank2 — no paging needed
     push hl
     push de
+    push bc             ; preserve caller's B (pixel_y) — Fix 33
 
-    ld a, c
+    ; Compute tile_x from 16-bit pixel_x in HL (0..1023):
+    ; tile_x = pixel_x / 16 = H*16 + L/16
+    ld a, l
     rrca
     rrca
     rrca
     rrca
+    and $0F             ; low 4 bits: L >> 4
+    ld e, a
+    ld a, h
+    and $03             ; only bits[1:0] of H matter (pixel_x <= 1023)
+    rlca
+    rlca
+    rlca
+    rlca
+    and $30             ; high 2 bits: H << 4
+    or e
     and $3F
-    ld e, a             ; tile_x (0..63)
+    ld e, a             ; E = tile_x (0..63)
 
     ld a, b
     rrca
@@ -2160,19 +2225,21 @@ GetTileAt:
 .gta_solid:
     ld a, TILE_GROUND
 .gta_done:
+    pop bc
     pop de
     pop hl
     ret
 
-; IsSolid — A=tile_id, NZ=solid Z=passable
+; IsSolid — A=tile_id → Z=passable (AIR or FLAG), NZ=solid, A preserved
+; Fix 37: removed 'ld a,1 / or a' at end — cp TILE_FLAG already leaves Z clear
+; (NZ) for any non-FLAG solid tile, and A is preserved so CheckCeiling can
+; read the tile_id back for QBlock detection without re-calling GetTileAt.
 IsSolid:
     or a
-    ret z
+    ret z               ; AIR (0) = passable, return Z
     cp TILE_FLAG
-    ret z
-    ld a, 1
-    or a
-    ret
+    ret z               ; FLAG (6) = passable, return Z
+    ret                 ; anything else = solid, cp left NZ, A = tile_id
 
 CheckGround:
     push hl
@@ -2183,27 +2250,28 @@ CheckGround:
     ld hl, (plr_y)
     ld a, l
     add a, PLR_H
-    ld b, a
+    ld b, a             ; B = pixel_y (plr_y + PLR_H)
 
-    ; Left foot
-    ld hl, (plr_x)
-    ld a, l
-    add a, 4
-    ld c, a
-    call GetTileAt
+    ; Left foot: pixel_x = plr_x + 4
+    ld hl, (plr_x)      ; HL = plr_x (16-bit) — Fix 33
+    ld de, 4
+    add hl, de          ; HL = plr_x + 4
+    call GetTileAt      ; BC preserved by GetTileAt (Fix 33), B still = pixel_y
     call IsSolid
     jp nz, .cg_snap
 
-    ; Right foot
+    ; Right foot: pixel_x = plr_x + PLR_W - 4
+    ; B = pixel_y still valid (GetTileAt now preserves BC)
     ld hl, (plr_x)
-    ld a, l
-    add a, PLR_W - 4
-    ld c, a
+    ld de, PLR_W - 4
+    add hl, de          ; HL = plr_x + PLR_W - 4
     call GetTileAt
     call IsSolid
     jr z, .cg_no_ground
 
 .cg_snap:
+    ; B = pixel_y = plr_y + PLR_H (preserved by GetTileAt Fix 33)
+    ; Snap plr_y to tile boundary: plr_y = (pixel_y & $F0) - PLR_H
     ld a, b
     and $F0
     sub PLR_H
@@ -2233,12 +2301,12 @@ CheckCeiling:
     push bc
 
     ld hl, (plr_y)
-    ld b, l
+    ld b, l             ; B = pixel_y (plr_y low byte — always fits 8 bits)
 
-    ld hl, (plr_x)
-    ld a, l
-    add a, 8
-    ld c, a
+    ; Centre-top probe: pixel_x = plr_x + 8
+    ld hl, (plr_x)      ; HL = plr_x (16-bit) — Fix 33
+    ld de, 8
+    add hl, de          ; HL = plr_x + 8
     call GetTileAt
     call IsSolid
     jr z, .cc_done
@@ -2266,21 +2334,129 @@ QBlockHit:
     push hl
     ld hl, coins
     inc (hl)
+    ; Add 50 points (BCD) to score[0], propagate carry to score[1] — Fix 39
     ld hl, score
     ld a, (hl)
     add a, $50
     daa
     ld (hl), a
+    jr nc, .qbh_no_carry
+    inc hl
+    ld a, (hl)
+    add a, $01
+    daa
+    ld (hl), a
+.qbh_no_carry:
     ld a, SFX_COIN
     call SFX_Play
     pop hl
     ret
 
-UpdateCamera:
+; CheckWalls: prevent player from walking through solid tiles horizontally.
+; Fix 34: Previously there was no horizontal tile collision at all — the player
+; could walk through any wall. Called from UpdatePlayer after applying vx.
+; Only checks the direction the player is currently moving.
+CheckWalls:
     push hl
+    push bc
     push de
 
-    ; Target = plr_x - 80
+    ld a, (plr_vx)
+    or a
+    jp z, .cw_done      ; CHANGED: Fix 46 — was jr z, target $C7F3 is +144 bytes, exceeds ±127 jr range
+
+    jp m, .cw_check_left
+
+.cw_check_right:
+    ; Two probes on the right edge (plr_x + PLR_W): top and bottom
+    ld hl, (plr_y)
+    ld a, l
+    add a, 2
+    ld b, a             ; B = pixel_y top-right probe
+    ld hl, (plr_x)
+    ld de, PLR_W
+    add hl, de          ; HL = plr_x + PLR_W
+    call GetTileAt
+    call IsSolid
+    jr nz, .cw_block_right
+
+    ld hl, (plr_y)
+    ld a, l
+    add a, PLR_H - 2
+    ld b, a             ; B = pixel_y bottom-right probe
+    ld hl, (plr_x)
+    ld de, PLR_W
+    add hl, de
+    call GetTileAt
+    call IsSolid
+    jp z, .cw_done      ; Fix 42a: was jr — target +143 bytes, exceeds jr range of ±127
+
+.cw_block_right:
+    ; Snap right edge to tile left boundary: plr_x = (right_edge & $F0) - PLR_W
+    ld hl, (plr_x)
+    ld de, PLR_W
+    add hl, de          ; HL = right_edge (16-bit)
+    ld a, l
+    and $F0
+    ld l, a             ; clear low nibble of right_edge
+    ld de, PLR_W
+    and a               ; clear carry
+    sbc hl, de          ; HL = snapped plr_x
+    jp c, .cw_r_clamp
+    ld (plr_x), hl
+    xor a
+    ld (plr_vx), a
+    jr .cw_done
+.cw_r_clamp:
+    ld hl, 0
+    ld (plr_x), hl
+    xor a
+    ld (plr_vx), a
+    jr .cw_done
+
+.cw_check_left:
+    ; Two probes on the left edge (plr_x): top and bottom
+    ld hl, (plr_y)
+    ld a, l
+    add a, 2
+    ld b, a             ; B = pixel_y top-left probe
+    ld hl, (plr_x)      ; HL = plr_x (left edge)
+    call GetTileAt
+    call IsSolid
+    jr nz, .cw_block_left
+
+    ld hl, (plr_y)
+    ld a, l
+    add a, PLR_H - 2
+    ld b, a             ; B = pixel_y bottom-left probe
+    ld hl, (plr_x)
+    call GetTileAt
+    call IsSolid
+    jr z, .cw_done
+
+.cw_block_left:
+    ; Snap left edge to tile right boundary: plr_x = (plr_x & $F0) + 16
+    ld hl, (plr_x)
+    ld a, l
+    and $F0
+    add a, 16
+    ld l, a
+    jr nc, .cw_l_ok
+    inc h
+.cw_l_ok:
+    ld (plr_x), hl
+    xor a
+    ld (plr_vx), a
+
+.cw_done:
+    pop de
+    pop bc
+    pop hl
+    ret
+
+UpdateCamera:
+    push hl                 ; CHANGED: Fix 50 — push hl first so pop hl at exit restores it correctly
+    push de                 ; CHANGED: Fix 50 — push de second so pop de at exit restores it correctly
     ld hl, (plr_x)
     ld a, l
     sub 80
@@ -2493,7 +2669,7 @@ CheckEnemyPlayer:
 
     ld hl, (plr_x)      ; HL = plr_x (16-bit DW)
     sub h               ; ent_xh - plr_xh
-    jr nz, .cep_no      ; different pages → definitely no collision
+    jp nz, .cep_no      ; Fix 42b: was jr — target +128 bytes, exceeds jr range of ±127
 
     ; Same 256-px page: compare low bytes only (sprites are 16 px wide)
     ld hl, ent_xl
@@ -2564,12 +2740,19 @@ CheckEnemyPlayer:
     ; Bounce player
     ld a, 256 - 5
     ld (plr_vy), a
-    ; Score +100 (BCD)
+    ; Score +100 (BCD) with carry propagation — Fix 39
     ld hl, score + 1
     ld a, (hl)
     add a, $01
     daa
     ld (hl), a
+    jr nc, .stomp_no_carry
+    inc hl
+    ld a, (hl)
+    add a, $01
+    daa
+    ld (hl), a
+.stomp_no_carry:
     ld a, SFX_STOMP
     call SFX_Play
 
@@ -2667,16 +2850,49 @@ DrawEnemies:
 .den_draw:
     pop af
     ld c, a             ; screen_y
+    cp 176              ; CHANGED: Fix 60 — was 177; screen_y=176 attr bottom row writes $5B00 (sysvar)
+    jp nc, .den_skip    ; CHANGED: Fix 49 — skip draw entirely if off-screen bottom
     ld b, iyh           ; screen_x
+
+    ; Fix 53/66 — erase at previous screen position before drawing at new position.
+    ; Fix 66: skip if ent_prev_sy[idx]=255 (InitLevel sentinel — not yet drawn).
+    push bc             ; save new screen_x/screen_y
+    push ix             ; save chosen sprite
+    ld d, 0
+    ld e, iyl           ; DE = entity index
+    ld hl, ent_prev_sy
+    add hl, de
+    ld c, (hl)          ; C = prev screen_y
+    ld a, c
+    cp 255              ; CHANGED: Fix 66 — 255 = never drawn, skip erase
+    jr z, .den_skip_erase
+    ld hl, ent_prev_sx
+    add hl, de
+    ld b, (hl)          ; B = prev screen_x
+    call EraseSprite    ; zero pixels at last drawn position
+.den_skip_erase:        ; CHANGED: Fix 66
+    pop ix
+    pop bc              ; restore new screen_x/screen_y
+
     call DrawSprite
+
+    ld d, 0             ; CHANGED: Fix 53 — store new screen_x/screen_y as prev
+    ld e, iyl
+    ld hl, ent_prev_sx
+    add hl, de
+    ld (hl), b
+    ld hl, ent_prev_sy
+    add hl, de
+    ld (hl), c
 
 .den_skip:
     pop bc
-    ; Restore entity index from IYL for inc/djnz
+    ; Restore entity index from IYL for inc/loop
     ld a, iyl
     ld c, a
     inc c
-    djnz .den_loop
+    dec b               ; Fix 35: djnz can't reach .den_loop (loop body > 127 bytes)
+    jp nz, .den_loop
 
     pop iy
     pop ix
@@ -2720,18 +2936,47 @@ DrawPlayer:
     ld ix, SPR_MARCO_JUMP
 
 .dp_draw:
-    ld a, (plr_x)
-    ld b, a
-    ld a, (cam_x)
-    ld c, a
-    ld a, b
-    sub c
-    ld b, a             ; screen X
+    ; Fix 32: 16-bit screen_x = plr_x - cam_x
+    ; plr_x and cam_x are both DW; using only low byte fails once x > 255.
+    ld hl, (plr_x)
+    ld de, (cam_x)
+    and a               ; clear carry
+    sbc hl, de          ; HL = plr_x - cam_x (signed 16-bit)
+    jp c, .dp_done      ; negative: player left of camera, don't draw
+    ld a, h
+    or a
+    jp nz, .dp_done     ; >= 256: off right edge, don't draw
+    ld b, l             ; screen_x (0..255)
 
     ld a, (plr_y)
-    ld c, a             ; screen Y
+    ld c, a             ; screen_y
+    cp 176              ; CHANGED: Fix 60 — was 177; screen_y=176 attr bottom row writes $5B00 (sysvar)
+    jp nc, .dp_done     ; CHANGED: Fix 49 — to $5800 (attr area): skip draw to prevent crash
+
+    ; Fix 53/66 — erase at previous screen position before drawing at new position.
+    ; Fix 66: skip if prev_sy=255 (InitLevel sentinel — not yet drawn this level).
+    ; prev_sy=255 → EraseSprite addr=$5Fxx (attr/sysvar area) → corrupts BANKM.
+    push bc             ; save new screen_x/screen_y
+    push ix             ; save chosen sprite
+    ld a, (plr_prev_sy)
+    cp 255              ; CHANGED: Fix 66 — 255 = never drawn, skip erase
+    jr z, .dp_skip_erase
+    ld a, (plr_prev_sx)
+    ld b, a             ; prev screen_x
+    ld a, (plr_prev_sy)
+    ld c, a             ; prev screen_y
+    call EraseSprite    ; zero pixels at last drawn position
+.dp_skip_erase:         ; CHANGED: Fix 66
+    pop ix
+    pop bc              ; restore new screen_x/screen_y
 
     call DrawSprite
+
+    ld a, b             ; CHANGED: Fix 53 — store new screen_x/screen_y as prev for next frame
+    ld (plr_prev_sx), a
+    ld a, c
+    ld (plr_prev_sy), a
+.dp_done:
 
     pop bc
     pop ix
@@ -2797,14 +3042,23 @@ DrawPowerup:
     or a
     ret z
     ld ix, SPR_PWRUP
+    ; Fix 38: 16-bit screen_x = pwrup_x - cam_x
+    ; pwrup_xl is 8-bit so build 16-bit value via L
+    ld hl, 0
     ld a, (pwrup_xl)
-    ld b, a
-    ld a, (cam_x)
-    sub b
-    neg                 ; screen_x = pwrup_xl - cam_x
-    ld b, a
+    ld l, a             ; HL = pwrup_x (zero-extended to 16 bits)
+    ld de, (cam_x)
+    and a               ; clear carry
+    sbc hl, de          ; HL = pwrup_x - cam_x
+    ret c               ; negative: off left of screen
+    ld a, h
+    or a
+    ret nz              ; >= 256: off right of screen
+    ld b, l             ; screen_x
     ld a, (pwrup_yl)
     ld c, a
+    cp 176              ; CHANGED: Fix 60 — was 177; screen_y=176 attr bottom row writes $5B00 (sysvar)
+    ret nc              ; CHANGED: Fix 49 — skip draw (no pushed regs to restore, plain ret)
     call DrawSprite
     ret
 
@@ -2827,6 +3081,8 @@ DrawHUD:
     ld c, 0
     call DrawString
 
+    ; Fix 40: display 4 BCD digits: score[1] hi, score[1] lo, score[0] hi, score[0] lo
+    ; score[1] = hundreds/thousands column, score[0] = ones/tens column
     ld a, (score+1)
     push af
     rrca
@@ -2837,12 +3093,30 @@ DrawHUD:
     add a, '0'
     ld b, 6
     ld c, 0
-    call DrawCharXY
+    call DrawCharXY     ; thousands digit
+
     inc b
     pop af
     and $0F
     add a, '0'
-    call DrawCharXY
+    call DrawCharXY     ; hundreds digit
+
+    inc b
+    ld a, (score)
+    push af
+    rrca
+    rrca
+    rrca
+    rrca
+    and $0F
+    add a, '0'
+    call DrawCharXY     ; tens digit
+
+    inc b
+    pop af
+    and $0F
+    add a, '0'
+    call DrawCharXY     ; units digit
 
     ld hl, STR_WORLD
     ld b, 16
@@ -3037,14 +3311,14 @@ PlayerDie:
     ret
 
 CheckLevelEnd:
-    ld hl, (plr_x)
-    ld a, l
-    add a, 8
-    ld c, a
+    ; Centre probe: pixel_x = plr_x + 8, pixel_y = plr_y + 8
     ld hl, (plr_y)
     ld a, l
     add a, 8
-    ld b, a
+    ld b, a             ; B = pixel_y — Fix 33
+    ld hl, (plr_x)      ; HL = plr_x (16-bit) — Fix 33
+    ld de, 8
+    add hl, de          ; HL = plr_x + 8
     call GetTileAt
     cp TILE_FLAG
     ret nz
@@ -3071,7 +3345,8 @@ InitGame:
     ret
 
 InitLevel:
-    xor a
+    call ClearScreen        ; CHANGED: Fix 51 — erase ShowLevelEntry text before gameplay starts
+    xor a                   ; CHANGED: Fix 54 — ClearScreen leaves A=1 (border colour); must zero A before zero-inits
     ld (plr_dead), a
     ld (plr_dead_timer), a
     ld (plr_vx), a
@@ -3085,10 +3360,27 @@ InitLevel:
     ld (plr_y), hl
     ld hl, 0
     ld (cam_x), hl
-    ld hl, 200
+    ld hl, 199          ; CHANGED: Fix 52 — was 200; DrawDecimal3 range is 0-199 (200 displays as '100')
     ld (level_timer), hl
     xor a
     ld (timer_cnt), a
+
+    ; Fix 62 — initialise prev screen positions to 255 (off-screen).
+    ; Without this, prev_sx/sy = 0 on first frame → EraseSprite clears
+    ; top-left corner of screen → HUD flicker on first draw frame.
+    ld a, 255               ; CHANGED: Fix 62 — off-screen sentinel
+    ld (plr_prev_sx), a
+    ld (plr_prev_sy), a
+    ld hl, ent_prev_sx
+    ld de, ent_prev_sx+1
+    ld bc, MAX_ENEMIES-1
+    ld (hl), 255
+    ldir                    ; CHANGED: Fix 62 — fill ent_prev_sx[0..7] = 255
+    ld hl, ent_prev_sy
+    ld de, ent_prev_sy+1
+    ld bc, MAX_ENEMIES-1
+    ld (hl), 255
+    ldir                    ; CHANGED: Fix 62 — fill ent_prev_sy[0..7] = 255
 
     ld hl, ent_state
     ld de, ent_state+1
@@ -3226,6 +3518,7 @@ MainLoop:
 
 .mg_drender:
     call RenderLevel
+    call DrawEnemies        ; CHANGED: Fix 64 — erase+redraw enemies during death anim to clear trails
     call DrawPlayer
     call DrawHUD
     jp .mg_frame
@@ -3238,7 +3531,8 @@ MainLoop:
     jp z, .mg_gameover
     ld a, STATE_PLAYING
     ld (game_state), a
-    call InitLevel
+    ; Fix 36: removed 'call InitLevel' here — jp .mg_level calls ShowLevelEntry
+    ; then InitLevel, so calling InitLevel here was doing a full double-init.
     jp .mg_level
 
 .mg_levelend:
@@ -3278,76 +3572,17 @@ MainLoop:
     DS 257, $BC
 
 ; ============================================================
-; FONT DATA ($8E00 in Bank 2) — ASCII 32-127, 8 bytes each
+; FONT DATA ($8E00 in Bank 2) — Custom chars ASCII 128-255 only
+; Fix 41: ASCII 32-127 removed. Those chars now use the ROM 1 font
+; at $3D00 (48K BASIC ROM), permanently paged via BankSwitch/BANKM.
+; Freed 520 bytes ($8E00-$9007) in Bank 2.
+; To add a custom tile char: append DEFB entries here (8 bytes each).
+; First entry = char 128, second = char 129, etc.
 ; ============================================================
     ORG ENGINE_BASE + $0E00
 
 FONT_DATA:
-    DEFB $00,$00,$00,$00,$00,$00,$00,$00  ; 32 space
-    DEFB $10,$10,$10,$10,$10,$00,$10,$00  ; 33 !
-    DEFB $28,$28,$00,$00,$00,$00,$00,$00  ; 34 "
-    DEFB $28,$7C,$28,$28,$7C,$28,$00,$00  ; 35 #
-    DEFB $10,$7C,$90,$7C,$12,$7C,$10,$00  ; 36 $
-    DEFB $C2,$C4,$08,$10,$26,$46,$00,$00  ; 37 %
-    DEFB $30,$48,$48,$30,$4A,$44,$3A,$00  ; 38 &
-    DEFB $10,$10,$00,$00,$00,$00,$00,$00  ; 39 '
-    DEFB $08,$10,$20,$20,$20,$10,$08,$00  ; 40 (
-    DEFB $20,$10,$08,$08,$08,$10,$20,$00  ; 41 )
-    DEFB $00,$10,$54,$38,$54,$10,$00,$00  ; 42 *
-    DEFB $00,$10,$10,$7C,$10,$10,$00,$00  ; 43 +
-    DEFB $00,$00,$00,$00,$00,$10,$10,$20  ; 44 ,
-    DEFB $00,$00,$00,$7C,$00,$00,$00,$00  ; 45 -
-    DEFB $00,$00,$00,$00,$00,$30,$30,$00  ; 46 .
-    DEFB $02,$04,$08,$10,$20,$40,$80,$00  ; 47 /
-    DEFB $38,$44,$4C,$54,$64,$44,$38,$00  ; 48 0
-    DEFB $10,$30,$10,$10,$10,$10,$38,$00  ; 49 1
-    DEFB $38,$44,$04,$08,$10,$20,$7C,$00  ; 50 2
-    DEFB $38,$44,$04,$18,$04,$44,$38,$00  ; 51 3
-    DEFB $08,$18,$28,$48,$7C,$08,$08,$00  ; 52 4
-    DEFB $7C,$40,$78,$04,$04,$44,$38,$00  ; 53 5
-    DEFB $38,$40,$78,$44,$44,$44,$38,$00  ; 54 6
-    DEFB $7C,$04,$08,$10,$20,$20,$20,$00  ; 55 7
-    DEFB $38,$44,$44,$38,$44,$44,$38,$00  ; 56 8
-    DEFB $38,$44,$44,$3C,$04,$04,$38,$00  ; 57 9
-    DEFB $00,$30,$30,$00,$30,$30,$00,$00  ; 58 :
-    DEFB $00,$30,$30,$00,$30,$10,$20,$00  ; 59 ;
-    DEFB $08,$10,$20,$40,$20,$10,$08,$00  ; 60 <
-    DEFB $00,$00,$7C,$00,$7C,$00,$00,$00  ; 61 =
-    DEFB $20,$10,$08,$04,$08,$10,$20,$00  ; 62 >
-    DEFB $38,$44,$04,$08,$10,$00,$10,$00  ; 63 ?
-    DEFB $38,$44,$5C,$54,$5C,$40,$38,$00  ; 64 @
-    DEFB $10,$28,$44,$7C,$44,$44,$44,$00  ; 65 A
-    DEFB $78,$44,$44,$78,$44,$44,$78,$00  ; 66 B
-    DEFB $38,$44,$40,$40,$40,$44,$38,$00  ; 67 C
-    DEFB $78,$44,$44,$44,$44,$44,$78,$00  ; 68 D
-    DEFB $7C,$40,$40,$78,$40,$40,$7C,$00  ; 69 E
-    DEFB $7C,$40,$40,$78,$40,$40,$40,$00  ; 70 F
-    DEFB $38,$44,$40,$5C,$44,$44,$38,$00  ; 71 G
-    DEFB $44,$44,$44,$7C,$44,$44,$44,$00  ; 72 H
-    DEFB $38,$10,$10,$10,$10,$10,$38,$00  ; 73 I
-    DEFB $04,$04,$04,$04,$04,$44,$38,$00  ; 74 J
-    DEFB $44,$48,$50,$60,$50,$48,$44,$00  ; 75 K
-    DEFB $40,$40,$40,$40,$40,$40,$7C,$00  ; 76 L
-    DEFB $44,$6C,$54,$54,$44,$44,$44,$00  ; 77 M
-    DEFB $44,$64,$54,$4C,$44,$44,$44,$00  ; 78 N
-    DEFB $38,$44,$44,$44,$44,$44,$38,$00  ; 79 O
-    DEFB $78,$44,$44,$78,$40,$40,$40,$00  ; 80 P
-    DEFB $38,$44,$44,$44,$54,$48,$34,$00  ; 81 Q
-    DEFB $78,$44,$44,$78,$50,$48,$44,$00  ; 82 R
-    DEFB $38,$44,$40,$38,$04,$44,$38,$00  ; 83 S
-    DEFB $7C,$10,$10,$10,$10,$10,$10,$00  ; 84 T
-    DEFB $44,$44,$44,$44,$44,$44,$38,$00  ; 85 U
-    DEFB $44,$44,$44,$44,$44,$28,$10,$00  ; 86 V
-    DEFB $44,$44,$44,$54,$54,$6C,$44,$00  ; 87 W
-    DEFB $44,$44,$28,$10,$28,$44,$44,$00  ; 88 X
-    DEFB $44,$44,$28,$10,$10,$10,$10,$00  ; 89 Y
-    DEFB $7C,$04,$08,$10,$20,$40,$7C,$00  ; 90 Z
-    DEFB $38,$20,$20,$20,$20,$20,$38,$00  ; 91 [
-    DEFB $80,$40,$20,$10,$08,$04,$02,$00  ; 92 backslash
-    DEFB $38,$08,$08,$08,$08,$08,$38,$00  ; 93 ]
-    DEFB $10,$28,$44,$00,$00,$00,$00,$00  ; 94 ^
-    DEFB $00,$00,$00,$00,$00,$00,$FE,$00  ; 95 _
-    DEFB $20,$10,$00,$00,$00,$00,$00,$00  ; 96 `
+; (no custom chars defined yet)
 
 ; ============================================================
 ; BANK 0 — WORLD 1 DATA ($C000 when bank 0 paged)
