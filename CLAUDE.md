@@ -7,7 +7,7 @@ Read this before reading anything else.
 
 ## 1. STARTUP SEQUENCE — do this every time, no exceptions
 
-**Order matters. Understand first. Build second. Code third.**
+**Order matters. Understand first. Code second. Build only when needed.**
 
 ### Step 1 — Clone the repo. Do not touch anything yet.
 
@@ -27,51 +27,63 @@ cd repo
                          listing/profiler reading guide
 4. changelog.chg      ← tail: what was last fixed and why
 5. diary.md           ← tail: context and mood of last session
-6. architecture.md    ← hardware reference: consult as needed,
+6. build/marco128.lst ← committed listing: use this for addresses immediately,
+                         no build needed
+7. architecture.md    ← hardware reference: consult as needed,
                          do NOT front-load the whole thing
 ```
 
 Do not skip this reading step. The most expensive bugs in this project
 came from acting before understanding the current state.
 
-### Step 3 — Build to get a fresh listing.
+### Step 3 — Verify the listing is current (no build needed).
 
 ```bash
+grep "Version" src/marco128.asm
+tail -5 changelog.chg
+```
+
+The version tag in the source and the last changelog entry must match.
+If they match, `build/marco128.lst` and `build/marco128.szx` are trustworthy —
+use them directly. **Do not build unless they don't match.**
+
+### Step 4 — Ask the user what they need.
+
+Only now are you ready to work.
+
+---
+
+## 1b. WHEN TO BUILD
+
+**Do NOT build at session start** — the committed listing and SZX are sufficient.
+
+**DO build when:**
+- You have just made a code change to `src/marco128.asm`
+- The version in source doesn't match the last changelog entry
+
+```bash
+cp tools/sjasmplus /usr/local/bin/sjasmplus && chmod +x /usr/local/bin/sjasmplus
 cp src/marco128.asm .
-mkdir -p build tools
 sjasmplus --nologo --lst=build/marco128.lst marco128.asm
 python3 make_szx.py
 snapdump build/marco128.szx | head -5
 ```
 
-If sjasmplus is not installed:
-```bash
-cp tools/sjasmplus /usr/local/bin/sjasmplus && chmod +x /usr/local/bin/sjasmplus
-```
-Pre-built Linux x86-64 binary with Lua 5.5 — no build step needed.
-
 Expected output:
 ```
 Pass 3 complete
 Errors: 0, warnings: 0
-GAME_START: $XXXX
-machine: Spectrum 128K
-PC: 0xXXXX  SP: 0xBBFE
+GAME_START: $XXXX  machine: Spectrum 128K  PC: 0xXXXX  SP: 0xBBFE
 ```
 
-**Verify that key addresses in the listing match marco128.md.**
-**If they don't match, marco128.md is out of date — update it before proceeding.**
+**After every successful build:**
+- Update `marco128.md` if any addresses changed
+- Commit `src/marco128.asm`, `build/marco128.lst`, `build/marco128.szx` together
+- Update `changelog.chg` and `diary.md`
+- Push
 
-NOTE: build/marco128.lst is committed to the repo — you can read addresses
-from it immediately without assembling first. Still rebuild to verify after
-any code change.
-
-**Do not write a single line of code until you have a clean build.**
-**Do not guess at addresses — read them from the listing.**
-
-### Step 4 — Ask the user what they need.
-
-Only now are you ready to work.
+**Do not write a single line of code until you have verified the listing.**
+**Do not guess at addresses — read them from build/marco128.lst.**
 
 ---
 
