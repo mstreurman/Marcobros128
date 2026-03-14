@@ -271,10 +271,10 @@ grep "Version" src/marco128.asm | head -1  # current version
 - `python3 -c "import z80; ..."` — Z80 CPU emulator for stack/register tracing
 
 ### Architecture notes:
-- Full technical reference: `architecture.md`
-- Bug history (67 fixes): Section B9 of `architecture.md`
-- Subroutine contracts: Section B11 of `architecture.md`
-- Pre-flight checklist for all code changes: Section C3.6 of `architecture.md`
+- Hardware reference: `architecture.md` (ZX Spectrum 128K)
+- Bug history (67 fixes): Section B9 of `marco128.md`
+- Subroutine contracts: Section B11 of `marco128.md`
+- Pre-flight checklist for all code changes: Section C3.6 of `lessons.md`
 
 ### Current open issues (as of v0.7.7):
 - Sprite ghosting during transitions (cosmetic)

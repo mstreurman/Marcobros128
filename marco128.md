@@ -64,12 +64,12 @@ $8000        Entry stub:    ld a,2 / out($FE),a (red border) / JP GAME_START
              MUSIC:         music_ptr(DW), music_note_ptr(DW), music_frame,
                             music_playing
              RENDER:        cam_tile_x, cam_sub_x, bankswitch_ok
-$80A3        level_map_cache  DS 704 (MAP_W×MAP_H = 64×11) — v0.6.5 listing confirmed
+$80A3        level_map_cache  DS 704 (MAP_W×MAP_H = 64×11) — v0.7.7 listing confirmed
                               Immediately follows variable block; drifts with it.
-$8375        GAME_START     di; ld sp,$BBFE; ld a,$17; ld($5B5C),a;  — v0.6.5 listing
+$8375        GAME_START     di; ld sp,$BBFE; ld a,$17; ld($5B5C),a;  — v0.7.7 listing
                             ld a,1; ld(bankswitch_ok),a;
                             call Setup_IM2; call ClearScreen; call AY_Silence; jp MainLoop
-$837D        Setup_IM2      Fills $7E00 with $BC×257; writes JP $BC00 at $BCBC; ld i,$7E; im 2; ei; ret  — v0.6.5
+$838F        Setup_IM2      Fills $7E00 with $BC×257; writes JP $BC00 at $BCBC; ld i,$7E; im 2; ei; ret  — v0.6.5
 $83CB        DoLevelBanking BankSwitch(cur_level_bank)→LoadLevelMap→LoadEnemySpawns→BankSwitch(7) — v0.6.5
 $842E        [FREE GAP]     Stack headroom begins here (end of LoadEnemySpawns in v0.6.5)
                             SP=$BBFE grows DOWN toward this address. ~15KB headroom.
@@ -302,7 +302,7 @@ SP=[20-21]  PC=[22-23]  I=[24]  IFF1=[26]  IFF2=[27]  IM=[28]
 ---
 
 ## B11. SUBROUTINE CONTRACTS (API TABLE)
-## Ground truth extracted from marco128.asm v0.6.2.
+## Ground truth extracted from marco128.asm v0.7.7.
 ## Format: IN / OUT / CLOBBERS / SIDE-EFFECTS / GLOBALS-WRITTEN
 ## "Clobbers" = register value on return differs from value on entry.
 ## Registers not listed = preserved (pushed/popped internally).
@@ -314,13 +314,13 @@ DrawCharXY        (trampoline $BFFD → DrawCharXY_Real $C000, bank7)
   OUT:      none
   CLOBBERS: nothing  (pushes/pops AF,IX,BC,DE,HL)
 
-DrawString        ($C05E, bank7)
+DrawString        ($C06E, bank7)
   IN:       HL=ptr to null-terminated string  B=col  C=row
   OUT:      none
   CLOBBERS: HL (advanced past null terminator)
   NOTE:     AF,BC preserved via push/pop. B on return = original B (restored).
 
-DrawTile          (~$C200, bank7)
+DrawTile          ($C224, bank7)
   IN:       A=tile_id (0-9)  B=screen_pixel_x (must be mult of 8)
             C=screen_pixel_y (must be mult of 8)
   OUT:      none
@@ -336,13 +336,13 @@ DrawSprite        ($C4A8, bank7)
             at level start; RenderLevel maintains solid tile attrs each frame.
             Guard callers with cp 176 / jp nc before calling (screen_y=176+ unsafe).
 
-RenderLevel       (~$C000 area, bank7)
+RenderLevel       ($C2BA, bank7)
   IN:       none
   OUT:      none
   CLOBBERS: nothing  (pushes/pops IY,IX,BC,DE,HL)
   GLOBALS:  writes cam_tile_x, cam_sub_x
 
-GetTileAt         ($8??? bank2)
+GetTileAt         (bank2, addr from listing)
   IN:       HL=world_pixel_x (16-bit, 0..1023)
             B=world_pixel_y  (8-bit)
   OUT:      A=tile_id (TILE_GROUND returned for out-of-bounds coords)
@@ -355,19 +355,19 @@ IsSolid           (bank2)
             A preserved (Fix 37 — cp TILE_FLAG leaves A intact)
   CLOBBERS: F only
 
-CheckGround       (bank2)
+CheckGround       ($C6C5, bank7)
   IN:       none (reads plr_x, plr_y globals)
   OUT:      none
   CLOBBERS: AF  (pushes/pops BC,DE,HL)
   GLOBALS:  writes plr_y, plr_vy, plr_on_ground, plr_jumping
 
-CheckCeiling      (bank2)
+CheckCeiling      ($C710, bank7)
   IN:       none (reads plr_x, plr_y globals)
   OUT:      none
   CLOBBERS: AF, DE  (pushes/pops BC,HL only)
   GLOBALS:  writes plr_vy, plr_y; may call QBlockHit → writes score,coins; SFX_Play
 
-CheckWalls        (bank2)
+CheckWalls        ($C75E, bank7)
   IN:       none (reads plr_vx, plr_x, plr_y globals)
   OUT:      none
   CLOBBERS: AF  (pushes HL, BC, DE on entry; pops DE, BC, HL on exit — all preserved)
@@ -376,7 +376,7 @@ CheckWalls        (bank2)
     two required jp (not jr): entry jr z (+144) and right-probe jp z (+143).
     When adding any new branch to .cw_done, verify distance before using jr.
 
-UpdatePlayer      (bank7)
+UpdatePlayer      ($C570, bank7)
   IN:       none (reads joy_held, joy_new, plr_* globals)
   OUT:      none
   CLOBBERS: DE  (pushes/pops HL,BC,AF)
@@ -467,7 +467,7 @@ AY_Silence        (bank2)
   GLOBALS:  zeros ay_buf[0..13]; sets ay_buf[AY_MIXER]=$FF
   SIDE-FX:  immediately silences AY via OUT (R7=$FF, vol A/B/C=0)
 
-LoadEnemySpawns   ($83CB, bank2) — called only from DoLevelBanking
+LoadEnemySpawns   ($83DD, bank2) — called only from DoLevelBanking
   IN:       none (reads cur_level_bank's data at $C000+ while level bank paged)
   OUT:      none
   CLOBBERS: AF, BC, DE, HL (all consumed internally; not push/pop balanced — caller must not rely on them)
@@ -487,7 +487,7 @@ ClearScreen       ($BFC5, bank2)
   SIDE-FX:  DI on entry; EI on exit; sets border=blue (colour 1)
   GLOBALS:  clears $4000-$57FF (pixels) and $5800-$5AFF (attrs, all=ATTR_SKY)
 
-Setup_IM2         ($837D, bank2)
+Setup_IM2         ($838F, bank2)
   IN:       none
   OUT:      none
   CLOBBERS: AF, BC, HL
