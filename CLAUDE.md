@@ -27,10 +27,10 @@ cd repo
                          listing/profiler reading guide
 4. changelog.chg      ← tail: what was last fixed and why
 5. diary.md           ← tail: context and mood of last session
-6. build/marco128.lst ← committed listing: use this for addresses immediately,
-                         no build needed
-7. architecture.md    ← hardware reference: consult as needed,
-                         do NOT front-load the whole thing
+6. build/marco128.lst      ← committed listing: addresses, no build needed
+7. architecture.md         ← hardware reference: consult AS NEEDED only
+8. marco128_contracts.md   ← subroutine contracts: consult when writing code
+9. marco128_history.md     ← bug history: consult when debugging a regression
 ```
 
 Do not skip this reading step. The most expensive bugs in this project
