@@ -44,7 +44,11 @@ python3 make_szx.py
 snapdump build/marco128.szx | head -5
 ```
 
-If sjasmplus is not installed, build it first — see SESSION_START.md.
+If sjasmplus is not installed:
+```bash
+cp tools/sjasmplus /usr/local/bin/sjasmplus && chmod +x /usr/local/bin/sjasmplus
+```
+Pre-built Linux x86-64 binary with Lua 5.5 — no build step needed.
 
 Expected output:
 ```

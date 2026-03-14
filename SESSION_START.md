@@ -31,24 +31,16 @@ grep "Version" src/marco128.asm # current version
 grep "open issues" README.md -A 10  # known problems
 ```
 
-## Step 3 — sjasmplus not installed?
+## Step 3 — Install sjasmplus
 
 ```bash
-# Clone and build (one-time)
-cd /tmp && git clone https://github.com/z00m128/sjasmplus.git
-cd sjasmplus
+# Use the pre-built binary from the repo (Linux x86-64, built with Lua 5.5)
+cp tools/sjasmplus /usr/local/bin/sjasmplus
+chmod +x /usr/local/bin/sjasmplus
 
-# Fix the Lua stub issue
-cat >> sjasm/lua_sjasm.cpp << 'STUBS'
-#ifndef USE_LUA
-void dirLUA() {}
-void dirENDLUA() {}
-void dirINCLUDELUA() {}
-#endif
-STUBS
-
-make USE_LUA=0 -j4
-cp build/release/sjasmplus /usr/local/bin/
+# Verify
+sjasmplus --version
+# SjASMPlus Z80 Cross-Assembler v1.22.0
 ```
 
 ## Step 4 — Tools available
