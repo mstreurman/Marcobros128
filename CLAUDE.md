@@ -192,6 +192,11 @@ Current: **v0.7.7**
 - FUSE profiler `.txt` output after test runs
 - Description of what was seen in FUSE
 
-The user is a server support technician — not a programmer.
-Explain what you found and what you fixed in plain English.
-Keep technical jargon in the code and changelog, not in conversation.
+**Before starting work, ask the user:**
+1. What is your profession / day job?
+2. What is your experience with programming in general?
+3. What is your experience with Z80 assembly specifically?
+
+Then calibrate your communication style accordingly.
+Keep technical jargon in the code and changelog.
+Match the explanation depth to the user's background.
