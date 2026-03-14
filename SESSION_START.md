@@ -61,6 +61,14 @@ cp build/release/sjasmplus /usr/local/bin/
 | Disassembler | `z80dasm --origin=0xC000 build/bank7.bin` | Disassemble banks |
 | Z80 emulator | `python3 -c "import z80; ..."` | Trace registers/stack |
 
+## Reference files
+
+| File | Purpose | Changes? |
+|------|---------|---------|
+| `architecture.md` | ZX Spectrum 128K hardware — ports, timing, keyboard matrix, ZXST format | Never |
+| `marco128.md` | Project data — addresses, sysvar layout, bug history, subroutine contracts | Every session |
+| `lessons.md` | Reusable rules — pre-flight checklist (C3.6), Z80 gotchas, invariants | Rarely |
+
 ## What the user provides each session
 
 - Fresh GitHub PAT (for `git push` at end)

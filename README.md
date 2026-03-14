@@ -161,7 +161,8 @@ $80B5  level_map_cache DS 352  32×11 tile cache (filled by DoLevelBanking)
 
 ## ARCHITECTURE SUMMARY
 
-See **`architecture.md`** for the full technical blueprint including:
+See **`architecture.md`** for ZX Spectrum 128K hardware reference.
+See **`marco128.md`** for project-specific data including:
 - Hardware specs and memory paging rules
 - Cross-bank calling rules (bank7 may call bank2; not the reverse)
 - Subroutine contracts (IN/OUT/CLOBBERS for every routine)
