@@ -7,9 +7,36 @@ Read this before reading anything else.
 
 ## 1. STARTUP SEQUENCE — do this every time, no exceptions
 
+**Order matters. Understand first. Build second. Code third.**
+
+### Step 1 — Clone the repo. Do not touch anything yet.
+
 ```bash
 git clone https://TOKEN@github.com/mstreurman/Marcobros128.git repo
 cd repo
+```
+
+### Step 2 — Read these files in this exact order before doing anything else.
+
+```
+1. CLAUDE.md          ← you are here. Finish reading it.
+2. marco128.md        ← current project state: version, open issues,
+                         addresses, sysvar layout, bug history (all 67 fixes),
+                         subroutine contracts
+3. lessons.md         ← pre-flight checklist, Z80 gotchas, coding rules,
+                         listing/profiler reading guide
+4. changelog.chg      ← tail: what was last fixed and why
+5. diary.md           ← tail: context and mood of last session
+6. architecture.md    ← hardware reference: consult as needed,
+                         do NOT front-load the whole thing
+```
+
+Do not skip this reading step. The most expensive bugs in this project
+came from acting before understanding the current state.
+
+### Step 3 — Build to get a fresh listing.
+
+```bash
 cp src/marco128.asm .
 mkdir -p build tools
 sjasmplus --nologo --lst=build/marco128.lst marco128.asm
@@ -19,16 +46,36 @@ snapdump build/marco128.szx | head -5
 
 If sjasmplus is not installed, build it first — see SESSION_START.md.
 
+Expected output:
+```
+Pass 3 complete
+Errors: 0, warnings: 0
+GAME_START: $XXXX
+machine: Spectrum 128K
+PC: 0xXXXX  SP: 0xBBFE
+```
+
+**Verify that key addresses in the listing match marco128.md.**
+**If they don't match, marco128.md is out of date — update it before proceeding.**
+
 **Do not write a single line of code until you have a clean build.**
 **Do not guess at addresses — read them from the listing.**
 
+### Step 4 — Ask the user what they need.
+
+Only now are you ready to work.
+
 ---
 
-## 2. REFERENCE FILES — read in this order
+## 2. REFERENCE FILES — quick lookup guide
 
-1. `marco128.md` — current addresses, sysvar layout, bug history, subroutine contracts
-2. `lessons.md` — pre-flight checklist, Z80 rules, known gotcha patterns
-3. `architecture.md` — hardware reference (only needed for port/timing/format questions)
+| File | Use it for |
+|------|-----------|
+| `marco128.md` | Addresses, sysvar layout, bug history, subroutine contracts |
+| `lessons.md` | Pre-flight checklist, Z80 rules, known crash patterns |
+| `architecture.md` | Port addresses, timing, keyboard matrix, ZXST format |
+| `changelog.chg` | What changed and when |
+| `diary.md` | Why it changed and what the context was |
 
 ---
 
