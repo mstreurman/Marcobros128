@@ -222,3 +222,61 @@ Source code and all original assets released under **CC0 1.0 Universal**
 (Public Domain Dedication).
 
 https://creativecommons.org/publicdomain/zero/1.0/
+
+---
+
+## SESSION STARTUP (for Claude)
+
+At the start of each new session, run these steps before doing anything else:
+
+```bash
+# 1. Clone the repo
+git clone https://TOKEN@github.com/mstreurman/Marcobros128.git repo
+cd repo
+
+# 2. Install sjasmplus if not already built
+# (see build instructions in sjasmplus README — requires fixing Lua stubs)
+# Quick fix: append stub functions to sjasm/lua_sjasm.cpp then make USE_LUA=0
+
+# 3. Verify clean build
+cp src/marco128.asm .
+mkdir -p build tools
+sjasmplus --nologo --lst=build/marco128.lst marco128.asm
+# Expect: Errors: 0, warnings: 0
+
+# 4. Build snapshot
+python3 make_szx.py
+# Expect: Wrote build/marco128.szx
+
+# 5. Verify snapshot
+snapdump build/marco128.szx | head -8
+# Expect: machine: Spectrum 128K, PC: 0x8375, SP: 0xBBFE
+
+# 6. Check current state
+tail -20 changelog.chg        # latest fixes
+grep "Version" src/marco128.asm | head -1  # current version
+```
+
+### What you need from the user each session:
+- Fresh GitHub PAT token (for git push at end of session)
+- FUSE profiler output (`.txt`) after test runs — upload directly to chat
+- Description of what was observed in FUSE
+
+### Key tools available in this environment:
+- `sjasmplus` — Z80 assembler (build from source once, then persistent)
+- `python3 make_szx.py` — builds `.szx` snapshot from scratch (no template)
+- `snapdump` — verifies `.szx` file integrity (from fuse-emulator-utils)
+- `z80dasm` — Z80 disassembler
+- `python3 -c "import z80; ..."` — Z80 CPU emulator for stack/register tracing
+
+### Architecture notes:
+- Full technical reference: `architecture.md`
+- Bug history (67 fixes): Section B9 of `architecture.md`
+- Subroutine contracts: Section B11 of `architecture.md`
+- Pre-flight checklist for all code changes: Section C3.6 of `architecture.md`
+
+### Current open issues (as of v0.7.7):
+- Sprite ghosting during transitions (cosmetic)
+- HUD attribute overlap with tile row 0-1 (cosmetic)
+- Game performance ~7fps (acceptable but improvable)
+- Enemy contact crash — may be resolved in v0.7.7, needs profiler run to confirm
