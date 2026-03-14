@@ -62,6 +62,10 @@ PC: 0xXXXX  SP: 0xBBFE
 **Verify that key addresses in the listing match marco128.md.**
 **If they don't match, marco128.md is out of date — update it before proceeding.**
 
+NOTE: build/marco128.lst is committed to the repo — you can read addresses
+from it immediately without assembling first. Still rebuild to verify after
+any code change.
+
 **Do not write a single line of code until you have a clean build.**
 **Do not guess at addresses — read them from the listing.**
 
