@@ -1,61 +1,144 @@
-# Marco Bros 128 — Bug History
+;;; MARCO128_HISTORY.MD — Claude-internal. Bug history. v0.7.9
+;;; FORMAT: #fix | class | symptom→cause→fix | regression_risk
+;;; Classes: CRASH SEVERE DRAW INPUT AUDIO PHYSICS LOGIC PERF PENDING
+;;; Search by fix number, class, or symptom keyword.
 
-> Full fix history (67 fixes). See B9 in this file.
-> Consult when debugging a crash pattern or investigating a regression.
+;;; ═══════════════ FIXES 68-72 (v0.7.8-0.7.9, 2026-03-15) ═══════════════
 
-## B9. KNOWN BUGS / PENDING FIXES
+72 | DRAW | SYMPTOM: ghost sprite pixels trail along jump path.
+   | CAUSE: DrawPlayer/DrawEnemies had EraseSprite inside screen_y guard block.
+   |        When guard fired (player near screen edge), erase skipped → old pixels persisted.
+   | FIX: moved EraseSprite call to BEFORE screen_y guard. Erase always runs at prev_sy.
+   |      255 sentinel (Fix 62/66) still guards the erase itself.
+   | RISK: any new drawable entity must follow erase-before-guard pattern.
 
-| # | Status | Description |
-|---|--------|-------------|
-| 67 | FIXED | Keyboard bit assignments wrong ($DF row): code read bit4=Y as P (right) and bit3=U as O (left). Correct: bit0=P, bit1=O. No left/right input ever worked since Fix 55. |
-| 66 | FIXED | `EraseSprite` with `prev_sy=255` (Fix 62 sentinel for "not yet drawn") computes screen address `$5F00` (attr area). All 16 erase rows write through `$5B00-$5F00` including BANKM at `$5B5C`, corrupting paging on first draw frame → CPU drops to IM1, game freezes. Fixed by `cp 255 / jr z` guard before EraseSprite in DrawPlayer and DrawEnemies. |
-| 65 | FIXED | DrawSprite attr write (Fix 56, extended Fix 63) caused crashes. Fix 63's 3-column write overflowed into the next attr row when sprite char col >= 30. Also redundant: ClearScreen sets ATTR_SKY for all 768 attr cells at level start; RenderLevel restores solid tile attrs every frame. Attr write removed entirely from DrawSprite. |
-| 64 | FIXED | `.mg_drender` (death animation) did not call DrawEnemies. Enemy sprites left permanent pixel trails for 60 frames. Added call DrawEnemies. |
-| 63 | FIXED | **CAUSED CRASH** see Fix 65. |
-| 62 | FIXED | InitLevel did not reset prev screen positions. `prev_sy=0` → EraseSprite cleared top-left screen corner (HUD flicker). Changed to `prev_sy=255` sentinel. See Fix 66 for the follow-on issue. |
-| 61 | FIXED | DrawSprite push/pop mismatch (Fix 56 added IY without updating pop order). Replaced IY coord storage with `ds_save_x/ds_save_y` memory vars, then in Fix 65 the attr write was removed entirely making those vars unnecessary too. |
-| 60 | FIXED | `cp 177 / jp nc` guards in DrawPlayer/DrawEnemies/DrawPowerup allowed `screen_y=176`, causing DrawSprite attr write (row+1 base `$5AE0` + 32 = `$5B00`) to hit sysvars. Changed to `cp 176`. |
-| 59 | FIXED | DrawSprite missing `push iy / pop iy`. Fix 56 used IYH/IYL for coord storage without preserving caller's IY. DrawEnemies stored entity index in IYL — corrupted after every DrawSprite call. |
-| 58 | FIXED | `AY_Silence` had redundant 14-byte ay_buf zeroing loop. AY_WriteBuffer rewrites all 14 registers every HANDLER call. Removed loop to shrink AY_Silence and keep DS pad positive. |
-| 57 | FIXED | `DS $BCC0 - $` went negative (Negative BLOCK? warning) after Fix 55 added bytes to HANDLER input section, pushing AY_Silence past $BCC0. Fixed by shrinking Fix 55 keyboard code (D accumulator) and removing AY_Silence loop (Fix 58). |
-| 56 | FIXED | **LATER REMOVED (Fix 65)** DrawSprite attr write added to fix black boxes around sprites. Later found redundant (ClearScreen already sets ATTR_SKY) and caused crashes via col overflow. |
-| 55 | FIXED | Kempston joystick port $1F removed (stock 128K Toastrack has no joystick port). Pure keyboard: O=left (port $DFFE bit1), P=right (bit0), Space=fire (port $7FFE bit0). Note: original Fix 55 had wrong bits (bit3/4); corrected in Fix 67. |
-| 54 | FIXED | `InitLevel`: `call ClearScreen` added (Fix 51) returns A=1 (blue border). All subsequent `ld (var),a` stored 1 instead of 0 — corrupting plr_dead, plr_vx, plr_vy, plr_on_ground, plr_jumping, plr_big. Added `xor a` immediately after `call ClearScreen`. |
-| 53 | FIXED | No sprite erase before redraw. Added EraseSprite calls in DrawPlayer and DrawEnemies with prev_sx/sy tracking arrays. |
-| 52 | FIXED | level_timer initialised to 200 but DrawDecimal3 handles 0-199 only; 200 displayed as "100". Changed to 199. |
-| 51 | FIXED | InitLevel had no ClearScreen. ShowLevelEntry text persisted on screen during gameplay. Added `call ClearScreen` at InitLevel entry. |
-| 50 | FIXED | **SEVERE** `UpdateCamera` missing `push de` / `push hl` at entry. `pop de / pop hl / ret` consumed UpdateCamera's own return address (→DE), UpdatePlayer's saved AF (→HL), then jumped to UpdatePlayer's saved BC as PC. Every frame the player existed, execution jumped to a random address. Caused all observed crashes. |
-| 49 | FIXED | DrawPlayer/DrawEnemies/DrawPowerup: no `screen_y` bounds check before DrawSprite. `screen_y ≥ 176` (was 177 before Fix 60) hits attr/sysvar area. Added `cp 176 / jp nc` guards. |
-| 50 | FIXED | **SEVERE** `UpdateCamera` missing `push de` / `push hl` at entry. `pop de / pop hl / ret` at exit consumed UpdateCamera's own return address (→DE), UpdatePlayer's saved AF (→HL), then jumped to UpdatePlayer's saved BC as PC. Every frame the player existed, execution jumped to a random address. Caused all crashes: display corruption, ROM1 execution, 48K BASIC reset, stuck AY note. Fix: add `push de` / `push hl` at entry. |
-| 49 | FIXED | `DrawPlayer`, `DrawEnemies`, `DrawPowerup`: no `screen_y` bounds check before `call DrawSprite`. `screen_y ≥ 177` causes sprite row 15 (y+15 ≥ 192) to map to `$5800` (attr/sysvar area), corrupting memory. Added `cp 177 / jp nc` guard before each `call DrawSprite`. |
-| 48 | FIXED | `LoadEnemySpawns`: `ent_yl = tile_y * 16` placed enemy body-top at tile-top, body fully inside the ground row. Fixed with `sub PLR_H` after the multiply so feet sit at the tile row top. |
-| 47 | FIXED | `RenderLevel` called `DrawTile` for every tile including AIR (tile_id=0, ~120/176 tiles per frame). AIR = all-zero pixels + SKY attr already set by `ClearScreen`. Added `or a / jp z, .rl_air_skip` — saves ~108K T-states/frame, bringing the game loop inside the 69,888 T-state budget. |
-| 46 | FIXED | CheckWalls entry `jr z,.cw_done` offset +144 > ±127. Changed to `jp z`. Identical class of bug to Fix42a — in the same routine, three lines earlier. Fixing one out-of-range branch does NOT guarantee the rest of the routine is safe. |
-| 45 | FIXED | **SEVERE** `LoadEnemySpawns`: `pop bc` inside `djnz` loop overwrote `B` (loop counter, should be 8) and `C` (entity index) with `pixel_x_high` and `pixel_x_low`. For any enemy at tile_x<16 (`pixel_x_high=0`), `djnz` decremented 0→255, running 255 extra iterations. Runaway loop executed level bank data as Z80 code; byte sequence `$CD $BC $83` in level data fired a spurious `CALL BankSwitch` with random `A`, paging out bank7 permanently. `RenderLevel` then ran in the wrong bank every frame. Fix: `push bc`/`pop bc` around the pixel_x store block to save and restore loop state. |
-| 44 | FIXED | CheckWalls entry `jr z` grew to +144 bytes after Fix43 added 4 bytes to bank7. Changed to `jp z`. |
-| 43 | FIXED | HANDLER missing `push iy`/`pop iy`. RenderLevel uses IYH/IYL as tile row/col counters; every RETI clobbered IY, resetting the counters and preventing `.rl_nextrow` from ever being reached. |
-| 42a | FIXED | CheckWalls jr z,.cw_done offset +143 > ±127. Changed to jp z. |
-| 42b | FIXED | CheckEnemyPlayer jr nz,.cep_no offset +128 > ±127. Changed to jp nz. |
-| 41 | FIXED | FONT_DATA had 520 bytes of ROM-duplicate ASCII 32-127. Replaced with ROM1 font at $3D00; BANKM=$17 permanent. |
-| 40 | FIXED | DrawHUD only showed 2 BCD digits. Extended to 4. |
-| 39 | FIXED | Score BCD carry not propagated between bytes. Fixed in QBlockHit and stomp. |
-| 38 | FIXED | DrawPowerup used 8-bit cam_x. Fixed to 16-bit sbc. |
-| 37 | FIXED | IsSolid clobbered A with ld a,1. QBlock detection always failed. |
-| 36 | FIXED | mg_respawn called InitLevel then jp .mg_level → double InitLevel. |
-| 35 | FIXED | DrawEnemies djnz loop > 127 bytes. Changed to dec b / jp nz. |
-| 34 | FIXED | No horizontal wall collision. CheckWalls added. |
-| 33 | FIXED | GetTileAt took C=pixel_x (8-bit). Wrong for x>255. Now HL=pixel_x (16-bit). |
-| 32 | FIXED | DrawPlayer used 8-bit plr_x/cam_x. Sprite teleported at x>255. |
-| 31 | FIXED | GetTileAt ld de,level_map_cache clobbered E. All tile reads 161 bytes off. |
-| 30 | FIXED | Copyright music replaced with original AY compositions. |
-| 29 | FIXED | DrawSprite no mask — ORed pixels into background. Added AND-NOT-OR. |
-| 28 | FIXED | DrawCharXY jr nc→jr c (inverted). Chars at row≥128 → attr area. |
-| 27 | FIXED | DrawTile/DrawSprite jr nc→jr c. 3rd+ tiles to attr/sysvar area. |
-| 26a-d | FIXED | EI/RETI, Space key row, 16-bit enemy X, SP $BF00→$BBFE. |
-| 25a-f | FIXED | Nested interrupt, boot order, DoLevelBanking shim, map padding. |
-| 23-24 | FIXED | ClearScreen DI/EI, DrawCharXY pin, turbo loader collision. |
-| P3 | PENDING | Full gameplay verification: movement, AI, collision, audio |
-| P4 | PENDING | pwrup_xl is DB (8-bit); powerups past tile 16 won't place correctly |
+71 | DRAW | SYMPTOM: sprite bottom half flickers in/out, random pixel debris during motion.
+   | CAUSE: EraseSprite row-advance had "jr nc, .er_ok" (was: sub $08 fires on carry).
+   |        Correct condition is jr c. Same class as Fix 27 (DrawTile), Fix 28 (DrawCharXY).
+   |        EraseSprite was the last routine with the inverted carry condition.
+   |        Effect: sub $08 H-correction fired ~2% instead of ~50% of boundary crossings.
+   |        Bottom 8 rows of every erase wrote to garbage addresses.
+   | FIX: jr nc → jr c at EraseSprite row-advance boundary branch.
+   | RISK: if new drawing routine added, MUST use jr c at this branch (see [SCR] in lessons.md).
 
----
+70 | INPUT | SYMPTOM: Space/jump does not work on first press after level start.
+   | CAUSE: TitleScreen exits on Space press → joy_prev bit4 set → edge-detect produces
+   |        joy_new bit4=0 for first frames of gameplay → jump trigger never fires.
+   | FIX: InitLevel zeroes joy_held, joy_new, joy_prev after timer_cnt reset.
+   | RISK: any new screen that exits on a key press should be followed by joy flush.
 
+69 | LOGIC | SYMPTOM: touching enemy kills player regardless of direction; stomp doesn't kill enemy.
+   | CAUSE: "bit 7,a / jr nz,.cep_stomp" — nz fires when bit7 IS set (vy negative = moving up).
+   |        Stomp triggered when player moving UP; hurt triggered when falling DOWN. Inverted.
+   | FIX: jr nz → jr z at .cep_hit in CheckEnemyPlayer.
+
+68 | CRASH,DRAW | SYMPTOM: crash to 48K BASIC with stuck AY note on any enemy contact.
+   |              Bottom half of sprites at wrong position or in wrong screen third.
+   | CAUSE: DrawSprite and EraseSprite: "and $07 / rrca / rrca / rrca" on screen_y prow field.
+   |        3 rrcas on value $02 → $40, placing prow bits in H[6] not H[1:0].
+   |        Sprite rows written to wrong addresses including $7Exx (IM2 table), $5Bxx (BANKM).
+   |        Corrupted I register / IM2 table → CPU dropped to IM1 → stuck AY note.
+   | FIX: removed 3 rrca after "and $07" in DrawSprite and EraseSprite.
+   |      prow bits now OR'd directly into H (no rotation needed).
+   | PROFILER: $0038 hits=1606, $0296-$02AE hits=68182 → IM1 active signature.
+   | RISK: any new screen address formula must NOT apply rrca to the prow field.
+
+;;; ═══════════════ FIXES 62-67 (v0.7.7, 2026-03-14) ═══════════════
+
+67 | INPUT | O/P keys: wrong bits read ($DF row bit4=Y as P, bit3=U as O). No movement ever worked.
+   | FIX: bit 0,a for P (right); bit 1,a for O (left). Space $7F row bit0 was correct.
+
+66 | CRASH | EraseSprite with prev_sy=255 sentinel computes H=$5F → attr/sysvar area.
+   |        Corrupts BANKM at $5B5C → IM1 mode → game freezes.
+   | FIX: cp 255 / jr z skip-erase guard before EraseSprite in DrawPlayer and DrawEnemies.
+
+65 | CRASH | DrawSprite attr write (Fix 56, 63): 3-col write overflowed into adjacent rows at col≥30.
+   |         Also redundant: ClearScreen sets ATTR_SKY; RenderLevel restores tile attrs.
+   | FIX: attr write removed entirely from DrawSprite.
+
+64 | DRAW | .mg_drender (death animation) skipped DrawEnemies → 60-frame enemy pixel trails.
+   | FIX: added call DrawEnemies to .mg_drender.
+
+63 | CRASH | Caused crash — see Fix 65. |
+
+62 | DRAW | InitLevel prev_sy=0 → EraseSprite cleared top-left corner on first draw frame (HUD flicker).
+   | FIX: prev_sy initialised to 255 (off-screen sentinel). CAUTION: see Fix 66.
+
+61 | CRASH | DrawSprite push/pop mismatch after Fix 56 added IY. Fixed with ds_save vars; later
+   |         removed in Fix 65 when attr write was eliminated entirely.
+
+60 | CRASH | cp 177 guard allowed screen_y=176. DrawSprite attr write hit $5B00 (BANKM sysvar).
+   | FIX: cp 176 (screen_y=176 → jp nc skip).
+
+59 | CRASH | DrawSprite missing push iy/pop iy. DrawEnemies stored entity index in IYL → corrupted.
+   | FIX: push iy/pop iy added to DrawSprite.
+
+58 | PERF | AY_Silence had redundant 14-byte ay_buf clear loop. Removed; AY_WriteBuffer does it.
+
+57 | BUILD | DS $BCC0-$ went negative after Fix 55 grew HANDLER section past $BCC0.
+   | FIX: shrink Fix 55 kbd code + remove AY_Silence loop (Fix 58).
+
+56 | DRAW | Added DrawSprite attr write → later caused crash (Fix 65). |
+
+55 | INPUT | Kempston port $1F removed (no joystick on 128K Toastrack). Pure O/P/Space keyboard.
+   |         Note: original bit assignments wrong; corrected Fix 67.
+
+54 | LOGIC | InitLevel ClearScreen returns A=1. Subsequent ld (var),a stored 1 not 0.
+   |         Corrupted plr_dead, plr_vx, plr_vy, plr_on_ground, plr_jumping, plr_big.
+   | FIX: xor a immediately after call ClearScreen.
+
+;;; ═══════════════ FIXES 47-53 (v0.6.x) ═══════════════
+
+53 | DRAW | No sprite erase before redraw → permanent pixel trails. Added EraseSprite with prev_sx/sy.
+52 | LOGIC | level_timer=200 but DrawDecimal3 handles 0-199; 200 shows as "100". Changed to 199.
+51 | DRAW | InitLevel no ClearScreen → ShowLevelEntry text persisted during gameplay.
+50 | CRASH,SEVERE | UpdateCamera missing push de/push hl. Pop consumed return address → random PC.
+   |               All crashes traced to this: display corruption, ROM1 exec, 48K BASIC, stuck AY.
+49 | CRASH | No screen_y bounds before DrawSprite. screen_y≥177 → attr area. Added cp 176/jp nc.
+48 | DRAW | LoadEnemySpawns: ent_yl=tile_y*16 placed enemy body inside ground. Fixed: sub PLR_H.
+47 | PERF | RenderLevel called DrawTile for all tiles including AIR (120/frame). Added or a/jp z skip.
+   |        Saves ~108K T-states/frame (>50% of frame budget recovered).
+
+;;; ═══════════════ FIXES 40-46 (v0.5.x-0.6.x) ═══════════════
+
+46 | BUILD | CheckWalls entry jr z offset +144 > ±127. Changed to jp z. Same routine as Fix 42a.
+   |         FIX 42A DID NOT FIX THIS. Adding bytes to routine can push safe jr over limit.
+45 | CRASH,SEVERE | LoadEnemySpawns pop bc inside djnz → B=pixel_x_high (often 0) → 255 extra iters.
+   |               Executed level data as Z80 code; $CD $BC $83 = CALL BankSwitch → bank7 paged out.
+   | FIX: push bc/pop bc wrapper around pixel_x store block inside loop.
+44 | BUILD | CheckWalls entry jr z grew to +144 after Fix 43 added bytes. Changed to jp z.
+43 | CRASH | HANDLER missing push iy/pop iy. RenderLevel uses IYH/IYL for tile row/col.
+   |         Every RETI clobbered IY → row/col reset every frame → .rl_nextrow unreachable.
+42a| BUILD | CheckWalls jr z,.cw_done +143 → jp z.
+42b| BUILD | CheckEnemyPlayer jr nz,.cep_no +128 → jp nz.
+41 | PERF | FONT_DATA had 520 bytes of ROM-duplicate ASCII 32-127. Removed; ROM1 font at $3D00 used.
+40 | DRAW | DrawHUD showed only 2 BCD digits. Extended to 4.
+
+;;; ═══════════════ FIXES 27-39 (v0.4.x-0.5.x) ═══════════════
+
+39 | LOGIC | Score BCD carry not propagated between bytes in QBlockHit and stomp.
+38 | DRAW | DrawPowerup used 8-bit cam_x. Fixed to 16-bit sbc.
+37 | LOGIC | IsSolid clobbered A with ld a,1 → QBlock detection always failed.
+36 | LOGIC | mg_respawn called InitLevel then jp .mg_level → double InitLevel.
+35 | BUILD | DrawEnemies djnz loop >127 bytes. Changed to dec b / jp nz pattern.
+34 | PHYSICS | No horizontal wall collision. CheckWalls added.
+33 | PHYSICS | GetTileAt took C=pixel_x (8-bit). Wrong for x>255. Changed to HL=pixel_x (16-bit).
+32 | DRAW | DrawPlayer used 8-bit plr_x/cam_x. Sprite teleported at x>255.
+31 | DRAW | GetTileAt ld de,level_map_cache clobbered E → all tile reads 161 bytes off.
+30 | AUDIO | Copyright music replaced with original AY compositions.
+29 | DRAW | DrawSprite no mask: ORed pixels into background (black boxes). Added AND-NOT-OR.
+28 | DRAW | DrawCharXY jr nc→jr c (inverted carry). Chars at row≥128 → attr area.
+27 | DRAW | DrawTile/DrawSprite jr nc→jr c. Bottom 8 rows of any tile/sprite → attr/sysvar.
+   |        ROOT CLASS: inverted carry condition at character-row-boundary branch.
+   |        FULLY RESOLVED v0.7.9: DrawTile(27), DrawCharXY(28), DrawSprite(27ctx), EraseSprite(71).
+
+;;; ═══════════════ FIXES 23-26 (v0.3.x-0.4.x) ═══════════════
+
+26a-d| MISC | EI/RETI sequence, Space key row correction, 16-bit enemy X, SP $BF00→$BBFE.
+25a-f| MISC | Nested interrupt, boot order, DoLevelBanking shim, bank2 CALL shim, map padding.
+23-24| MISC | ClearScreen DI/EI wrap, DrawCharXY pin at $BFFD, turbo loader collision.
+
+;;; ═══════════════ PENDING ═══════════════
+
+P3 | PENDING | Full gameplay verification: all levels, enemy types, powerup, audio, HUD accuracy.
+P4 | PENDING | pwrup_xl is DB (8-bit); powerups past tile 16 won't place correctly (>255 world_x).
