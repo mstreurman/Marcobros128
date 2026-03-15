@@ -2,7 +2,7 @@
 *Project-specific data: addresses, contracts, bugs, game state.*
 *See architecture.md for ZX Spectrum 128K hardware reference.*
 *See lessons.md for reusable Z80 coding rules and gotchas.*
-*Last updated: v0.7.7*
+*Last updated: v0.7.8*
 
 ---
 
@@ -93,8 +93,8 @@ $BCEB        Music_Stop     Sets music_playing=0, calls AY_Silence
 $BCF3        Music_Tick     Advances music by one frame (reads note, writes ay_buf)
 $BD62        SFX_Play       A=sfx index; sets sfx_ptr, sfx_active=1
 $BD7F        SFX_Tick       Advances SFX by one frame (overwrites ay_buf ch C)
-$BFA5        BankSwitch     A=bank number; guards on bankswitch_ok; reads BANKM; OUT $7FFD
-$BFC5        ClearScreen    di; clear pixels+attrs via LDIR×2; out blue; ei; ret
+$BF7B        BankSwitch     A=bank number; guards on bankswitch_ok; reads BANKM; OUT $7FFD  — v0.7.8
+$BF9B        ClearScreen    di; clear pixels+attrs via LDIR×2; out blue; ei; ret  — v0.7.8
 $BFFD        DrawCharXY     PINNED (ORG $BFFD). JP DrawCharXY_Real — last 3 bytes of bank2
 ```
 
@@ -104,14 +104,19 @@ $C000        DrawCharXY_Real  B=col, C=row, A=char
                              Fix41: A<128→ROM1 font ($3D00+(A-32)*8); A>=128→FONT_DATA+((A-128)*8)
 $C05E        DrawString       HL=null-terminated string, B=col, C=row
 ~$C200       DrawTile         16×16 tile blit
-~$C400       DrawSprite       IX=sprite, B=pixel_y, C=pixel_x; mask+OR blit
-~$C500       UpdatePlayer     Input→physics→position
+~$C400       DrawSprite       IX=sprite, B=pixel_y, C=pixel_x; mask+OR blit  — $C4A8 v0.7.8
+~$C529       EraseSprite      Zero 16×16 pixel area at B=screen_x, C=screen_y  — v0.7.8
+~$C56A       UpdatePlayer     Input→physics→position  — v0.7.8
+~$C841       UpdateEnemies    Entity array walk  — v0.7.8
+~$C8EA       CheckEnemyPlayer AABB vs player, stomp/hurt  — v0.7.8
+~$C97E       DrawEnemies      Erase+draw all active enemies  — v0.7.8
+~$CA2F       DrawPlayer       Erase+draw player  — v0.7.8
 ~$C6A0       UpdateEnemies    Entity array walk
 ~$C800       CheckCollisions
 ~$C900       DrawPowerup
 ~$C98C       DrawHUD          Score(4 BCD digits), lives, coins, timer
 ~$CBA0       InitGame         lives=3, score=0, world=0, level=0
-$CBBC        InitLevel        game_state=PLAYING; DoLevelBanking; Music_Init(OVERWORLD)
+$CD56        InitLevel        game_state=PLAYING; DoLevelBanking; Music_Init(OVERWORLD)  — v0.7.8
 $CC4E        MainLoop         Title→InitGame→ShowLevelEntry→InitLevel→frame loop
 ```
 

@@ -4,7 +4,7 @@
 ; Inspired by classic 8-bit platformers of the 1980s.
 ; Assembler: sjasmplus (z00m fork)
 ; Build:     sjasmplus --nologo --lst=build/marco128.lst marco128.asm
-; Version:   0.7.7
+; Version:   0.7.8
 ; ============================================================
 
     DEVICE ZXSPECTRUM128
@@ -126,7 +126,7 @@ NOTE_B5         EQU 112     ; B5  = 988 Hz
     ld a, 2
     out ($FE), a
     jp GAME_START
-    DEFB "MB128 v0.7.7", 0   ; version tag in binary
+    DEFB "MB128 v0.7.8", 0   ; version tag in binary
 
 ; ============================================================
 ; GAME VARIABLES  ($8003 onwards)
@@ -1804,11 +1804,8 @@ DrawSprite:
     rrca
     ld h, a
     ld a, c
-    and $07
-    rrca
-    rrca
-    rrca
-    or h
+    and $07             ; CHANGED: Fix 68 — removed 3 rrca. y&$07 goes into H bits[2:0] directly.
+    or h                ; 3 rrca on e.g. $02→$40: placed pixel-row bits into H bit6, not bit1 → corrupt addr.
     or $40
     ld h, a
     ld a, c
@@ -1926,10 +1923,7 @@ EraseSprite:
     rrca
     ld h, a
     ld a, c
-    and $07
-    rrca
-    rrca
-    rrca
+    and $07             ; CHANGED: Fix 68 — removed 3 rrca. Same corrupt-address bug as DrawSprite.
     or h
     or $40
     ld h, a
@@ -2711,7 +2705,7 @@ CheckEnemyPlayer:
     ; Stomp if player moving down
     ld a, (plr_vy)
     bit 7, a
-    jr nz, .cep_stomp
+    jr z, .cep_stomp    ; CHANGED: Fix 69 — was jr nz: stomped on way UP, hurt on way DOWN. Inverted.
 
     ; Player hurt — if big, lose powerup and go invincible; if small, die
     ld a, (plr_inv_timer)
@@ -3364,6 +3358,9 @@ InitLevel:
     ld (level_timer), hl
     xor a
     ld (timer_cnt), a
+    ld (joy_held), a    ; CHANGED: Fix 70 — flush stale key state from TitleScreen exit.
+    ld (joy_new), a     ; TitleScreen exits on Space press → joy_prev bit4 set → joy_new bit4=0
+    ld (joy_prev), a    ; for first frames of gameplay → jump never triggers on first press.
 
     ; Fix 62 — initialise prev screen positions to 255 (off-screen).
     ; Without this, prev_sx/sy = 0 on first frame → EraseSprite clears

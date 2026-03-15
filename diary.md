@@ -146,3 +146,71 @@ we checked the matrix layout.
 
 Fixed: `bit 0,a` for P, `bit 1,a` for O. Space (`$7F` row `bit0`)
 was already correct and unchanged.
+
+## 2026-03-15 — v0.7.8: The address formula, the backwards stomp, and the stolen jump
+
+### Fix 68 — Six rotations that broke everything
+
+This one was subtle and took the full profiler trace to confirm. DrawSprite
+and EraseSprite both compute a Spectrum screen address from (screen_x, screen_y).
+The formula splits screen_y into three fields:
+
+- bits[7:6] → which screen third (top/middle/bottom)
+- bits[5:3] → which character row within the third (goes into L)
+- bits[2:0] → which pixel row within the character (goes into H)
+
+The bug: bits[2:0] were being processed with three `rrca` instructions before
+OR-ing into H. On the Z80, `rrca` rotates right through the carry. Three rrcas
+on a value like $02 produce $40 — the bits end up in bit6 of H instead of
+bits[1:0]. For screen_y=130 (low 3 bits = $02) this shifted H from the correct
+$50 to $50|$40 = $50... actually the corruption was subtler — the OR'd value
+displaced the correct third/char bits entirely.
+
+The practical effect: for any screen_y not on an 8-pixel boundary, the sprite
+rows were written to wrong addresses. For some Y values this meant writing into
+$7Exx (the IM2 vector table), $5Bxx (sysvars including BANKM), or $C0xx–$FFxx
+(bank7 game code). The first enemy contact produced a screen_y value with
+non-zero low bits, wrote to the IM2 table, broke the interrupt chain, and the
+CPU fell into IM1 mode. The last AY note played forever.
+
+The profiler confirmed it: $0038 (IM1 vector) got 1,606 hits, ROM keyboard
+scanner $0296–$02AE got 68,182 hits. Classic crash signature.
+
+Fix: remove the 3 rrca from both DrawSprite and EraseSprite. The low 3 bits
+of screen_y go directly into H via OR. Six bytes removed, both routines fixed.
+
+This also explains why tiles rendered correctly — DrawTile uses a different
+register (D not H) and the address formula there was written without the
+erroneous rotations.
+
+### Fix 69 — Backwards stomp
+
+The comment even said "Stomp if player moving down" but the code did the
+opposite. `bit 7,a` on plr_vy sets Z=0 when the bit IS set (vy negative =
+moving up). `jr nz,.cep_stomp` therefore jumped to stomp when going UP.
+When the player jumped onto an enemy, the upward vy triggered the stomp
+correctly — but that also means landing on enemies from above (vy positive,
+bit7 clear, Z=1) was taking the hurt-player path instead.
+
+One character: `nz` → `z`.
+
+### Fix 70 — The title screen stole the first jump
+
+When you press Space on the title screen, the HANDLER sets joy_prev bit4.
+On the next interrupt, joy_new = joy_held AND NOT joy_prev = 0 (Space is still
+held but it's no longer a new press). ShowLevelEntry runs for 100 frames — by
+then joy_prev has been set for 100 frames. When gameplay starts, the first
+Space press fires joy_new correctly... except by then the player has probably
+already released it and re-pressed, producing exactly one jump. But if they
+held Space through the level-entry screen, joy_new bit4 never fired at all.
+
+Fix: zero joy_held, joy_new, joy_prev in InitLevel. Three extra stores, no
+other changes.
+
+### Session notes
+
+This was a three-bug session diagnosed entirely from one profiler upload and
+source reading. The IM1 hits in the profiler pointed straight at the crash.
+The half-sprite report pointed at the address formula. The no-jump report
+pointed at the edge-detect state machine. All three diagnosed before any code
+was written, all three fixed cleanly, build passed first time.
