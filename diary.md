@@ -214,3 +214,55 @@ source reading. The IM1 hits in the profiler pointed straight at the crash.
 The half-sprite report pointed at the address formula. The no-jump report
 pointed at the edge-detect state machine. All three diagnosed before any code
 was written, all three fixed cleanly, build passed first time.
+
+## 2026-03-15 — v0.7.9: The last inverted carry and the jump trail
+
+### Fix 71 — EraseSprite: the one that got away
+
+Fix 27 corrected the inverted carry condition in DrawTile. Fix 28 caught the
+same bug in DrawCharXY. Fix 68 (this session, previous build) caught it in
+the address formula. But the row-advance logic in EraseSprite was never
+touched — it still had `jr nc` where it should be `jr c`.
+
+The consequence: the `sub $08` H-correction that keeps the screen address
+within the correct screen third was firing almost never (1.8% of boundary
+crossings vs the correct ~50%). For every sprite at a Y position where the
+bottom 8 rows cross a character-row boundary, EraseSprite was zeroing pixels
+at whatever garbage address H happened to hold — which could be anywhere in
+the top two thirds of the screen. This caused the bottom half of sprites to
+flicker in and out, and left random zeroed pixels scattered around the screen
+during motion.
+
+One character: `nc` → `c` at source line 1955.
+
+### Fix 72 — EraseSprite must happen before the screen_y guard
+
+When the player jumps, plr_y briefly exceeds 175 (bottom guard) or goes
+negative (top of screen during a high jump). The screen_y guard fires and
+the entire erase+draw block is skipped. On the next frame the player is back
+in the drawable zone — DrawSprite draws at the new position, but the pixels
+from the last drawn frame (before the guard fired) were never erased.
+Result: a trail of ghost sprites marking every frame where the player was
+near the screen edge.
+
+Fix: separate the erase from the draw. Erase always runs at prev_sy (with
+the 255 sentinel from Fix 66), then the guard decides whether to call
+DrawSprite. If the guard fires, we still erase the old position cleanly.
+Applied to both DrawPlayer and DrawEnemies.
+
+### HUD flicker (not fixed — cosmetic, inherent to architecture)
+
+RenderLevel draws tile pixels into character rows 0–10 every frame. Tile
+row 1 (pixel_y=16–31) overlaps with the COINS line of the HUD. DrawHUD
+runs after RenderLevel and redraws the text on top. The flicker is the CRT
+beam catching the tile pixels in the gap between the two calls. This is
+standard Spectrum display behaviour and cannot be eliminated without either
+restricting RenderLevel to rows 2–10 (losing the ceiling row) or moving
+HUD drawing into the HANDLER (which cannot call bank7 code). Left for now.
+
+### Session notes
+
+Second profiler of the session. No crash, scrolling working, movement good.
+Three specific visual artefacts reported: bottom half disappearing, jump
+trail, HUD flicker. Profiler confirmed Fix 71 (EraseSprite row advance) and
+Fix 72 (erase before guard). HUD flicker documented as architectural.

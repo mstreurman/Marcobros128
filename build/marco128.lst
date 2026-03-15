@@ -5,7 +5,7 @@
    4  0000              ; Inspired by classic 8-bit platformers of the 1980s.
    5  0000              ; Assembler: sjasmplus (z00m fork)
    6  0000              ; Build:     sjasmplus --nologo --lst=build/marco128.lst marco128.asm
-   7  0000              ; Version:   0.7.8
+   7  0000              ; Version:   0.7.9
    8  0000              ; ============================================================
    9  0000
   10  0000                  DEVICE ZXSPECTRUM128
@@ -127,9 +127,9 @@
  126  8000 3E 02            ld a, 2
  127  8002 D3 FE            out ($FE), a
  128  8004 C3 75 83         jp GAME_START
- 129  8007 4D 42 31 32      DEFB "MB128 v0.7.8", 0   ; version tag in binary
+ 129  8007 4D 42 31 32      DEFB "MB128 v0.7.9", 0   ; version tag in binary
  129  800B 38 20 76 30
- 129  800F 2E 37 2E 38
+ 129  800F 2E 37 2E 39
  129  8013 00
  130  8014
  131  8014              ; ============================================================
@@ -232,7 +232,7 @@
  228  8386                                       ; own EI fires into our handler, not IM0. (Fix 25c)
  229  8386 CD 9B BF         call ClearScreen
  230  8389 CD 76 BC         call AY_Silence
- 231  838C C3 24 CE         jp MainLoop
+ 231  838C C3 20 CE         jp MainLoop
  232  838F
  233  838F              ; ============================================================
  234  838F              ; IM2 SETUP
@@ -2004,9 +2004,9 @@
 1952  C55B 7D               ld a, l
 1953  C55C C6 20            add a, $20
 1954  C55E 6F               ld l, a
-1955  C55F 30 04            jr nc, .er_ok
-1956  C561 7C               ld a, h
-1957  C562 D6 08            sub $08
+1955  C55F 38 04            jr c, .er_ok        ; CHANGED: Fix 71 — was jr nc: same inverted carry as Fix 27/28/68.
+1956  C561 7C               ld a, h             ; carry → crossed third boundary → H correct, skip sub.
+1957  C562 D6 08            sub $08             ; no carry → same third → H overshot → correct.
 1958  C564 67               ld h, a
 1959  C565              .er_ok:
 1960  C565 10 E4            djnz .er_row
@@ -2187,7 +2187,7 @@
 2135  C668 7C               ld a, h
 2136  C669 FE 02            cp 2
 2137  C66B 38 03            jr c, .up_no_pit
-2138  C66D CD 16 CD         call PlayerDie
+2138  C66D CD 12 CD         call PlayerDie
 2139  C670              .up_no_pit:
 2140  C670
 2141  C670 F1               pop af
@@ -2773,7 +2773,7 @@
 2721  C94E 32 22 80         ld (plr_inv_timer), a
 2722  C951 18 28            jr .cep_no
 2723  C953              .cep_die:
-2724  C953 CD 16 CD         call PlayerDie
+2724  C953 CD 12 CD         call PlayerDie
 2725  C956 18 23            jr .cep_no
 2726  C958
 2727  C958              .cep_stomp:
@@ -2830,7 +2830,7 @@
 2778  C990 19               add hl, de
 2779  C991 7E               ld a, (hl)
 2780  C992 B7               or a
-2781  C993 CA 20 CA         jp z, .den_skip
+2781  C993 CA 22 CA         jp z, .den_skip
 2782  C996
 2783  C996                  ; Fix 26c: 16-bit screen_x = ent_x - cam_x
 2784  C996                  ; Load ent_x low byte into B, high byte into A
@@ -2851,13 +2851,13 @@
 2799  C9A8                  ; High byte: ent_xh - cam_xh - borrow
 2800  C9A8 78               ld a, b             ; A = ent_xh
 2801  C9A9 9C               sbc a, h            ; A = ent_xh - cam_xh - borrow
-2802  C9AA DA 20 CA         jp c, .den_skip     ; negative: entity is left of camera
+2802  C9AA DA 22 CA         jp c, .den_skip     ; negative: entity is left of camera
 2803  C9AD B7               or a
-2804  C9AE C2 20 CA         jp nz, .den_skip    ; high byte > 0: screen_x >= 256, off right
+2804  C9AE C2 22 CA         jp nz, .den_skip    ; high byte > 0: screen_x >= 256, off right
 2805  C9B1                  ; screen_x = C (fits in 8 bits); must be < 240
 2806  C9B1 79               ld a, c
 2807  C9B2 FE F0            cp 240
-2808  C9B4 D2 20 CA         jp nc, .den_skip
+2808  C9B4 D2 22 CA         jp nc, .den_skip
 2809  C9B7
 2810  C9B7 FD 67            ld iyh, a           ; save screen_x in IYH
 2811  C9B9
@@ -2896,755 +2896,755 @@
 2844  C9EA              .den_draw:
 2845  C9EA F1               pop af
 2846  C9EB 4F               ld c, a             ; screen_y
-2847  C9EC FE B0            cp 176              ; CHANGED: Fix 60 — was 177; screen_y=176 attr bottom row writes $5B00 (sysvar)
-2848  C9EE D2 20 CA         jp nc, .den_skip    ; CHANGED: Fix 49 — skip draw entirely if off-screen bottom
-2849  C9F1 FD 44            ld b, iyh           ; screen_x
-2850  C9F3
-2851  C9F3                  ; Fix 53/66 — erase at previous screen position before drawing at new position.
-2852  C9F3                  ; Fix 66: skip if ent_prev_sy[idx]=255 (InitLevel sentinel — not yet drawn).
-2853  C9F3 C5               push bc             ; save new screen_x/screen_y
-2854  C9F4 DD E5            push ix             ; save chosen sprite
-2855  C9F6 16 00            ld d, 0
-2856  C9F8 FD 5D            ld e, iyl           ; DE = entity index
-2857  C9FA 21 2D 80         ld hl, ent_prev_sy
-2858  C9FD 19               add hl, de
-2859  C9FE 4E               ld c, (hl)          ; C = prev screen_y
-2860  C9FF 79               ld a, c
-2861  CA00 FE FF            cp 255              ; CHANGED: Fix 66 — 255 = never drawn, skip erase
-2862  CA02 28 08            jr z, .den_skip_erase
-2863  CA04 21 25 80         ld hl, ent_prev_sx
-2864  CA07 19               add hl, de
-2865  CA08 46               ld b, (hl)          ; B = prev screen_x
-2866  CA09 CD 29 C5         call EraseSprite    ; zero pixels at last drawn position
-2867  CA0C              .den_skip_erase:        ; CHANGED: Fix 66
-2868  CA0C DD E1            pop ix
-2869  CA0E C1               pop bc              ; restore new screen_x/screen_y
-2870  CA0F
-2871  CA0F CD A8 C4         call DrawSprite
-2872  CA12
-2873  CA12 16 00            ld d, 0             ; CHANGED: Fix 53 — store new screen_x/screen_y as prev
-2874  CA14 FD 5D            ld e, iyl
-2875  CA16 21 25 80         ld hl, ent_prev_sx
-2876  CA19 19               add hl, de
-2877  CA1A 70               ld (hl), b
-2878  CA1B 21 2D 80         ld hl, ent_prev_sy
-2879  CA1E 19               add hl, de
-2880  CA1F 71               ld (hl), c
-2881  CA20
-2882  CA20              .den_skip:
-2883  CA20 C1               pop bc
-2884  CA21                  ; Restore entity index from IYL for inc/loop
-2885  CA21 FD 7D            ld a, iyl
-2886  CA23 4F               ld c, a
-2887  CA24 0C               inc c
-2888  CA25 05               dec b               ; Fix 35: djnz can't reach .den_loop (loop body > 127 bytes)
-2889  CA26 C2 87 C9         jp nz, .den_loop
-2890  CA29
-2891  CA29 FD E1            pop iy
-2892  CA2B DD E1            pop ix
-2893  CA2D C1               pop bc
-2894  CA2E C9               ret
-2895  CA2F
-2896  CA2F              ; ============================================================
-2897  CA2F              ; DRAW PLAYER
-2898  CA2F              ; ============================================================
-2899  CA2F              DrawPlayer:
-2900  CA2F DD E5            push ix
-2901  CA31 C5               push bc
-2902  CA32
-2903  CA32 3A 1F 80         ld a, (plr_dead)
-2904  CA35 B7               or a
-2905  CA36 20 2B            jr nz, .dp_dead
-2906  CA38
-2907  CA38 3A 1D 80         ld a, (plr_on_ground)
-2908  CA3B B7               or a
-2909  CA3C 28 1F            jr z, .dp_jumping
-2910  CA3E
-2911  CA3E 3A 18 80         ld a, (plr_vx)
-2912  CA41 B7               or a
-2913  CA42 28 13            jr z, .dp_standing
-2914  CA44
-2915  CA44 3A 1B 80         ld a, (plr_anim)
-2916  CA47 E6 01            and $01
-2917  CA49 28 06            jr z, .dp_walk1
-2918  CA4B DD 21 68 C3      ld ix, SPR_MARCO_WALK2
-2919  CA4F 18 16            jr .dp_draw
-2920  CA51              .dp_walk1:
-2921  CA51 DD 21 48 C3      ld ix, SPR_MARCO_WALK1
-2922  CA55 18 10            jr .dp_draw
-2923  CA57              .dp_standing:
-2924  CA57 DD 21 28 C3      ld ix, SPR_MARCO_STAND
-2925  CA5B 18 0A            jr .dp_draw
-2926  CA5D              .dp_jumping:
-2927  CA5D DD 21 88 C3      ld ix, SPR_MARCO_JUMP
-2928  CA61 18 04            jr .dp_draw
-2929  CA63              .dp_dead:
-2930  CA63 DD 21 88 C3      ld ix, SPR_MARCO_JUMP
-2931  CA67
-2932  CA67              .dp_draw:
-2933  CA67                  ; Fix 32: 16-bit screen_x = plr_x - cam_x
-2934  CA67                  ; plr_x and cam_x are both DW; using only low byte fails once x > 255.
-2935  CA67 2A 14 80         ld hl, (plr_x)
-2936  CA6A ED 5B 35 80      ld de, (cam_x)
-2937  CA6E A7               and a               ; clear carry
-2938  CA6F ED 52            sbc hl, de          ; HL = plr_x - cam_x (signed 16-bit)
-2939  CA71 DA A6 CA         jp c, .dp_done      ; negative: player left of camera, don't draw
-2940  CA74 7C               ld a, h
-2941  CA75 B7               or a
-2942  CA76 C2 A6 CA         jp nz, .dp_done     ; >= 256: off right edge, don't draw
-2943  CA79 45               ld b, l             ; screen_x (0..255)
-2944  CA7A
-2945  CA7A 3A 16 80         ld a, (plr_y)
-2946  CA7D 4F               ld c, a             ; screen_y
-2947  CA7E FE B0            cp 176              ; CHANGED: Fix 60 — was 177; screen_y=176 attr bottom row writes $5B00 (sysvar)
-2948  CA80 D2 A6 CA         jp nc, .dp_done     ; CHANGED: Fix 49 — to $5800 (attr area): skip draw to prevent crash
-2949  CA83
-2950  CA83                  ; Fix 53/66 — erase at previous screen position before drawing at new position.
-2951  CA83                  ; Fix 66: skip if prev_sy=255 (InitLevel sentinel — not yet drawn this level).
-2952  CA83                  ; prev_sy=255 → EraseSprite addr=$5Fxx (attr/sysvar area) → corrupts BANKM.
-2953  CA83 C5               push bc             ; save new screen_x/screen_y
-2954  CA84 DD E5            push ix             ; save chosen sprite
-2955  CA86 3A 24 80         ld a, (plr_prev_sy)
-2956  CA89 FE FF            cp 255              ; CHANGED: Fix 66 — 255 = never drawn, skip erase
-2957  CA8B 28 0B            jr z, .dp_skip_erase
-2958  CA8D 3A 23 80         ld a, (plr_prev_sx)
-2959  CA90 47               ld b, a             ; prev screen_x
-2960  CA91 3A 24 80         ld a, (plr_prev_sy)
-2961  CA94 4F               ld c, a             ; prev screen_y
-2962  CA95 CD 29 C5         call EraseSprite    ; zero pixels at last drawn position
-2963  CA98              .dp_skip_erase:         ; CHANGED: Fix 66
-2964  CA98 DD E1            pop ix
-2965  CA9A C1               pop bc              ; restore new screen_x/screen_y
-2966  CA9B
-2967  CA9B CD A8 C4         call DrawSprite
-2968  CA9E
-2969  CA9E 78               ld a, b             ; CHANGED: Fix 53 — store new screen_x/screen_y as prev for next frame
-2970  CA9F 32 23 80         ld (plr_prev_sx), a
-2971  CAA2 79               ld a, c
-2972  CAA3 32 24 80         ld (plr_prev_sy), a
-2973  CAA6              .dp_done:
-2974  CAA6
-2975  CAA6 C1               pop bc
-2976  CAA7 DD E1            pop ix
-2977  CAA9 C9               ret
-2978  CAAA
-2979  CAAA              ; ============================================================
-2980  CAAA              ; POWERUP
-2981  CAAA              ; ============================================================
-2982  CAAA              UpdatePowerup:
-2983  CAAA 3A 93 80         ld a, (pwrup_active)
-2984  CAAD B7               or a
-2985  CAAE C8               ret z
-2986  CAAF
-2987  CAAF 3A 94 80         ld a, (pwrup_vy)
-2988  CAB2 3C               inc a
-2989  CAB3 FE 05            cp 5
-2990  CAB5 38 02            jr c, .upw_ok
-2991  CAB7 3E 04            ld a, 4
-2992  CAB9              .upw_ok:
-2993  CAB9 32 94 80         ld (pwrup_vy), a
-2994  CABC 21 92 80         ld hl, pwrup_yl
-2995  CABF 86               add a, (hl)
-2996  CAC0 77               ld (hl), a
-2997  CAC1
-2998  CAC1                  ; Check overlap with player
-2999  CAC1 3A 90 80         ld a, (pwrup_xl)
-3000  CAC4 47               ld b, a
-3001  CAC5 3A 14 80         ld a, (plr_x)
-3002  CAC8 90               sub b
-3003  CAC9 FA D3 CA         jp m, .upw_xneg
-3004  CACC FE 1C            cp PLR_W + 16
-3005  CACE D2 01 CB         jp nc, .upw_no
-3006  CAD1 18 07            jr .upw_y
-3007  CAD3              .upw_xneg:
-3008  CAD3 ED 44            neg
-3009  CAD5 FE 10            cp 16
-3010  CAD7 D2 01 CB         jp nc, .upw_no
-3011  CADA              .upw_y:
-3012  CADA 3A 92 80         ld a, (pwrup_yl)
-3013  CADD 47               ld b, a
-3014  CADE 3A 16 80         ld a, (plr_y)
-3015  CAE1 90               sub b
-3016  CAE2 FA EC CA         jp m, .upw_yneg
-3017  CAE5 FE 1E            cp PLR_H + 16
-3018  CAE7 D2 01 CB         jp nc, .upw_no
-3019  CAEA 18 07            jr .upw_collect
-3020  CAEC              .upw_yneg:
-3021  CAEC ED 44            neg
-3022  CAEE FE 10            cp 16
-3023  CAF0 D2 01 CB         jp nc, .upw_no
-3024  CAF3              .upw_collect:
-3025  CAF3 AF               xor a
-3026  CAF4 32 93 80         ld (pwrup_active), a
-3027  CAF7 3E 01            ld a, 1
-3028  CAF9 32 21 80         ld (plr_big), a
-3029  CAFC 3E 05            ld a, SFX_POWERUP
-3030  CAFE CD 62 BD         call SFX_Play
-3031  CB01              .upw_no:
-3032  CB01 C9               ret
-3033  CB02
-3034  CB02              DrawPowerup:
-3035  CB02 3A 93 80         ld a, (pwrup_active)
-3036  CB05 B7               or a
-3037  CB06 C8               ret z
-3038  CB07 DD 21 48 C4      ld ix, SPR_PWRUP
-3039  CB0B                  ; Fix 38: 16-bit screen_x = pwrup_x - cam_x
-3040  CB0B                  ; pwrup_xl is 8-bit so build 16-bit value via L
-3041  CB0B 21 00 00         ld hl, 0
-3042  CB0E 3A 90 80         ld a, (pwrup_xl)
-3043  CB11 6F               ld l, a             ; HL = pwrup_x (zero-extended to 16 bits)
-3044  CB12 ED 5B 35 80      ld de, (cam_x)
-3045  CB16 A7               and a               ; clear carry
-3046  CB17 ED 52            sbc hl, de          ; HL = pwrup_x - cam_x
-3047  CB19 D8               ret c               ; negative: off left of screen
-3048  CB1A 7C               ld a, h
-3049  CB1B B7               or a
-3050  CB1C C0               ret nz              ; >= 256: off right of screen
-3051  CB1D 45               ld b, l             ; screen_x
-3052  CB1E 3A 92 80         ld a, (pwrup_yl)
-3053  CB21 4F               ld c, a
-3054  CB22 FE B0            cp 176              ; CHANGED: Fix 60 — was 177; screen_y=176 attr bottom row writes $5B00 (sysvar)
-3055  CB24 D0               ret nc              ; CHANGED: Fix 49 — skip draw (no pushed regs to restore, plain ret)
-3056  CB25 CD A8 C4         call DrawSprite
-3057  CB28 C9               ret
-3058  CB29
-3059  CB29              ; ============================================================
-3060  CB29              ; HUD
-3061  CB29              ; ============================================================
-3062  CB29              DrawHUD:
-3063  CB29 E5               push hl
-3064  CB2A C5               push bc
-3065  CB2B
-3066  CB2B 21 00 58         ld hl, ATTR_BASE
-3067  CB2E 06 40            ld b, 64
-3068  CB30              .hud_clr:
-3069  CB30 36 07            ld (hl), $07
-3070  CB32 23               inc hl
-3071  CB33 10 FB            djnz .hud_clr
-3072  CB35
-3073  CB35 21 E0 CB         ld hl, STR_SCORE
-3074  CB38 06 00            ld b, 0
-3075  CB3A 0E 00            ld c, 0
-3076  CB3C CD 6E C0         call DrawString
-3077  CB3F
-3078  CB3F                  ; Fix 40: display 4 BCD digits: score[1] hi, score[1] lo, score[0] hi, score[0] lo
-3079  CB3F                  ; score[1] = hundreds/thousands column, score[0] = ones/tens column
-3080  CB3F 3A 3B 80         ld a, (score+1)
-3081  CB42 F5               push af
-3082  CB43 0F               rrca
-3083  CB44 0F               rrca
-3084  CB45 0F               rrca
-3085  CB46 0F               rrca
-3086  CB47 E6 0F            and $0F
-3087  CB49 C6 30            add a, '0'
-3088  CB4B 06 06            ld b, 6
-3089  CB4D 0E 00            ld c, 0
-3090  CB4F CD FD BF         call DrawCharXY     ; thousands digit
-3091  CB52
-3092  CB52 04               inc b
-3093  CB53 F1               pop af
-3094  CB54 E6 0F            and $0F
-3095  CB56 C6 30            add a, '0'
-3096  CB58 CD FD BF         call DrawCharXY     ; hundreds digit
-3097  CB5B
-3098  CB5B 04               inc b
-3099  CB5C 3A 3A 80         ld a, (score)
-3100  CB5F F5               push af
-3101  CB60 0F               rrca
-3102  CB61 0F               rrca
-3103  CB62 0F               rrca
-3104  CB63 0F               rrca
-3105  CB64 E6 0F            and $0F
-3106  CB66 C6 30            add a, '0'
-3107  CB68 CD FD BF         call DrawCharXY     ; tens digit
-3108  CB6B
-3109  CB6B 04               inc b
-3110  CB6C F1               pop af
-3111  CB6D E6 0F            and $0F
-3112  CB6F C6 30            add a, '0'
-3113  CB71 CD FD BF         call DrawCharXY     ; units digit
-3114  CB74
-3115  CB74 21 E6 CB         ld hl, STR_WORLD
-3116  CB77 06 10            ld b, 16
-3117  CB79 0E 00            ld c, 0
-3118  CB7B CD 6E C0         call DrawString
-3119  CB7E 3A 40 80         ld a, (world)
-3120  CB81 3C               inc a
-3121  CB82 C6 30            add a, '0'
-3122  CB84 06 16            ld b, 22
-3123  CB86 0E 00            ld c, 0
-3124  CB88 CD FD BF         call DrawCharXY
-3125  CB8B 3E 2D            ld a, '-'
-3126  CB8D 06 17            ld b, 23
-3127  CB8F 0E 00            ld c, 0
-3128  CB91 CD FD BF         call DrawCharXY
-3129  CB94 3A 41 80         ld a, (level_num)
-3130  CB97 3C               inc a
-3131  CB98 C6 30            add a, '0'
-3132  CB9A 06 18            ld b, 24
-3133  CB9C 0E 00            ld c, 0
-3134  CB9E CD FD BF         call DrawCharXY
-3135  CBA1
-3136  CBA1 21 EC CB         ld hl, STR_LIVES
-3137  CBA4 06 00            ld b, 0
-3138  CBA6 0E 01            ld c, 1
-3139  CBA8 CD 6E C0         call DrawString
-3140  CBAB 3A 3E 80         ld a, (lives)
-3141  CBAE 06 06            ld b, 6
-3142  CBB0 0E 01            ld c, 1
-3143  CBB2 CD 7E C0         call DrawDigit
-3144  CBB5
-3145  CBB5 21 F2 CB         ld hl, STR_TIME
-3146  CBB8 06 14            ld b, 20
-3147  CBBA 0E 01            ld c, 1
-3148  CBBC CD 6E C0         call DrawString
-3149  CBBF 3A 42 80         ld a, (level_timer)     ; low byte (0-199)
-3150  CBC2 06 19            ld b, 25
-3151  CBC4 0E 01            ld c, 1
-3152  CBC6 CD A1 C0         call DrawDecimal3
-3153  CBC9
-3154  CBC9 21 F7 CB         ld hl, STR_COINS
-3155  CBCC 06 00            ld b, 0
-3156  CBCE 0E 02            ld c, 2
-3157  CBD0 CD 6E C0         call DrawString
-3158  CBD3 3A 3F 80         ld a, (coins)
-3159  CBD6 06 06            ld b, 6
-3160  CBD8 0E 02            ld c, 2
-3161  CBDA CD 83 C0         call DrawDecimal2
-3162  CBDD
-3163  CBDD C1               pop bc
-3164  CBDE E1               pop hl
-3165  CBDF C9               ret
-3166  CBE0
-3167  CBE0 53 43 4F 52  STR_SCORE:  DEFB "SCORE", 0
-3167  CBE4 45 00
-3168  CBE6 57 4F 52 4C  STR_WORLD:  DEFB "WORLD", 0
-3168  CBEA 44 00
-3169  CBEC 4C 49 56 45  STR_LIVES:  DEFB "LIVES", 0
-3169  CBF0 53 00
-3170  CBF2 54 49 4D 45  STR_TIME:   DEFB "TIME", 0
-3170  CBF6 00
-3171  CBF7 43 4F 49 4E  STR_COINS:  DEFB "COINS", 0
-3171  CBFB 53 00
-3172  CBFD
-3173  CBFD              ; ============================================================
-3174  CBFD              ; TITLE SCREEN
-3175  CBFD              ; ============================================================
-3176  CBFD              TitleScreen:
-3177  CBFD CD 9B BF         call ClearScreen
-3178  CC00 3E 01            ld a, 1
-3179  CC02 D3 FE            out (PORT_ULA), a
-3180  CC04
-3181  CC04 21 34 CC         ld hl, STR_TITLE1
-3182  CC07 06 09            ld b, 9
-3183  CC09 0E 08            ld c, 8
-3184  CC0B CD 6E C0         call DrawString
-3185  CC0E
-3186  CC0E 21 43 CC         ld hl, STR_TITLE2
-3187  CC11 06 07            ld b, 7
-3188  CC13 0E 0A            ld c, 10
-3189  CC15 CD 6E C0         call DrawString
-3190  CC18
-3191  CC18 21 54 CC         ld hl, STR_TITLE3
-3192  CC1B 06 04            ld b, 4
-3193  CC1D 0E 12            ld c, 18
-3194  CC1F CD 6E C0         call DrawString
-3195  CC22
-3196  CC22 21 1F BF         ld hl, MUSIC_TITLE
-3197  CC25 CD DB BC         call Music_Init
-3198  CC28
-3199  CC28              .ts_wait:
-3200  CC28 76               halt
-3201  CC29 3A 96 80         ld a, (joy_new)
-3202  CC2C CB 67            bit 4, a
-3203  CC2E 28 F8            jr z, .ts_wait
-3204  CC30
-3205  CC30 CD EB BC         call Music_Stop
-3206  CC33 C9               ret
-3207  CC34
-3208  CC34 4D 41 52 43  STR_TITLE1: DEFB "MARCO BROS 128", 0
-3208  CC38 4F 20 42 52
-3208  CC3C 4F 53 20 31
-3208  CC40 32 38 00
-3209  CC43 5A 58 20 53  STR_TITLE2: DEFB "ZX SPECTRUM 128K", 0
-3209  CC47 50 45 43 54
-3209  CC4B 52 55 4D 20
-3209  CC4F 31 32 38 4B
-3209  CC53 00
-3210  CC54 46 49 52 45  STR_TITLE3: DEFB "FIRE TO START", 0
-3210  CC58 20 54 4F 20
-3210  CC5C 53 54 41 52
-3210  CC60 54 00
-3211  CC62
-3212  CC62              ShowLevelEntry:
-3213  CC62 CD 9B BF         call ClearScreen
-3214  CC65 21 E6 CB         ld hl, STR_WORLD
-3215  CC68 06 0A            ld b, 10
-3216  CC6A 0E 0A            ld c, 10
-3217  CC6C CD 6E C0         call DrawString
-3218  CC6F 3A 40 80         ld a, (world)
-3219  CC72 3C               inc a
-3220  CC73 C6 30            add a, '0'
-3221  CC75 06 10            ld b, 16
-3222  CC77 0E 0A            ld c, 10
-3223  CC79 CD FD BF         call DrawCharXY
-3224  CC7C 3E 2D            ld a, '-'
-3225  CC7E 06 11            ld b, 17
-3226  CC80 0E 0A            ld c, 10
-3227  CC82 CD FD BF         call DrawCharXY
-3228  CC85 3A 41 80         ld a, (level_num)
-3229  CC88 3C               inc a
-3230  CC89 C6 30            add a, '0'
-3231  CC8B 06 12            ld b, 18
-3232  CC8D 0E 0A            ld c, 10
-3233  CC8F CD FD BF         call DrawCharXY
-3234  CC92 21 EC CB         ld hl, STR_LIVES
-3235  CC95 06 09            ld b, 9
-3236  CC97 0E 0E            ld c, 14
-3237  CC99 CD 6E C0         call DrawString
-3238  CC9C 3A 3E 80         ld a, (lives)
-3239  CC9F 06 10            ld b, 16
-3240  CCA1 0E 0E            ld c, 14
-3241  CCA3 CD 7E C0         call DrawDigit
-3242  CCA6 06 64            ld b, 100
-3243  CCA8              .sle_wait:
-3244  CCA8 76               halt
-3245  CCA9 10 FD            djnz .sle_wait
-3246  CCAB C9               ret
-3247  CCAC
-3248  CCAC              ShowGameOver:
-3249  CCAC CD EB BC         call Music_Stop
-3250  CCAF CD 9B BF         call ClearScreen
-3251  CCB2 21 F3 CC         ld hl, STR_GAMEOVER
-3252  CCB5 06 08            ld b, 8
-3253  CCB7 0E 0B            ld c, 11
-3254  CCB9 CD 6E C0         call DrawString
-3255  CCBC 06 78            ld b, 120
-3256  CCBE              .sgo_wait:
-3257  CCBE 76               halt
-3258  CCBF 10 FD            djnz .sgo_wait
-3259  CCC1              .sgo_fire:
-3260  CCC1 76               halt
-3261  CCC2 3A 96 80         ld a, (joy_new)
-3262  CCC5 CB 67            bit 4, a
-3263  CCC7 28 F8            jr z, .sgo_fire
-3264  CCC9 C9               ret
-3265  CCCA
-3266  CCCA              ShowVictory:
-3267  CCCA CD EB BC         call Music_Stop
-3268  CCCD CD 9B BF         call ClearScreen
-3269  CCD0 21 FD CC         ld hl, STR_WIN1
-3270  CCD3 06 07            ld b, 7
-3271  CCD5 0E 09            ld c, 9
-3272  CCD7 CD 6E C0         call DrawString
-3273  CCDA 21 06 CD         ld hl, STR_WIN2
-3274  CCDD 06 06            ld b, 6
-3275  CCDF 0E 0C            ld c, 12
-3276  CCE1 CD 6E C0         call DrawString
-3277  CCE4 21 1F BF         ld hl, MUSIC_TITLE
-3278  CCE7 CD DB BC         call Music_Init
-3279  CCEA 06 00            ld b, 0
-3280  CCEC              .sv_wait:
-3281  CCEC 76               halt
-3282  CCED 10 FD            djnz .sv_wait
-3283  CCEF CD EB BC         call Music_Stop
-3284  CCF2 C9               ret
-3285  CCF3
-3286  CCF3 47 41 4D 45  STR_GAMEOVER: DEFB "GAME OVER", 0
-3286  CCF7 20 4F 56 45
-3286  CCFB 52 00
-3287  CCFD 59 4F 55 20  STR_WIN1:     DEFB "YOU WIN!", 0
-3287  CD01 57 49 4E 21
-3287  CD05 00
-3288  CD06 43 4F 4E 47  STR_WIN2:     DEFB "CONGRATULATIONS", 0
-3288  CD0A 52 41 54 55
-3288  CD0E 4C 41 54 49
-3288  CD12 4F 4E 53 00
-3289  CD16
-3290  CD16              PlayerDie:
-3291  CD16 3A 1F 80         ld a, (plr_dead)
-3292  CD19 B7               or a
-3293  CD1A C0               ret nz
-3294  CD1B 3E 01            ld a, 1
-3295  CD1D 32 1F 80         ld (plr_dead), a
-3296  CD20 AF               xor a
-3297  CD21 32 20 80         ld (plr_dead_timer), a
-3298  CD24 3E F8            ld a, 256 - 8
-3299  CD26 32 19 80         ld (plr_vy), a
-3300  CD29 3E 02            ld a, STATE_DEAD
-3301  CD2B 32 39 80         ld (game_state), a
-3302  CD2E 3E 04            ld a, SFX_DIE
-3303  CD30 CD 62 BD         call SFX_Play
-3304  CD33 CD EB BC         call Music_Stop
-3305  CD36 C9               ret
-3306  CD37
-3307  CD37              CheckLevelEnd:
-3308  CD37                  ; Centre probe: pixel_x = plr_x + 8, pixel_y = plr_y + 8
-3309  CD37 2A 16 80         ld hl, (plr_y)
-3310  CD3A 7D               ld a, l
-3311  CD3B C6 08            add a, 8
-3312  CD3D 47               ld b, a             ; B = pixel_y — Fix 33
-3313  CD3E 2A 14 80         ld hl, (plr_x)      ; HL = plr_x (16-bit) — Fix 33
-3314  CD41 11 08 00         ld de, 8
-3315  CD44 19               add hl, de          ; HL = plr_x + 8
-3316  CD45 CD 74 C6         call GetTileAt
-3317  CD48 FE 06            cp TILE_FLAG
-3318  CD4A C0               ret nz
-3319  CD4B 3E 03            ld a, STATE_LEVELEND
-3320  CD4D 32 39 80         ld (game_state), a
-3321  CD50 3E 07            ld a, SFX_LEVELEND
-3322  CD52 CD 62 BD         call SFX_Play
-3323  CD55 C9               ret
-3324  CD56
-3325  CD56              ; ============================================================
-3326  CD56              ; INIT
-3327  CD56              ; ============================================================
-3328  CD56              InitGame:
-3329  CD56 3E 03            ld a, 3
-3330  CD58 32 3E 80         ld (lives), a
-3331  CD5B AF               xor a
-3332  CD5C 32 3A 80         ld (score), a
-3333  CD5F 32 3B 80         ld (score+1), a
-3334  CD62 32 3C 80         ld (score+2), a
-3335  CD65 32 3D 80         ld (score+3), a
-3336  CD68 32 3F 80         ld (coins), a
-3337  CD6B 32 40 80         ld (world), a
-3338  CD6E 32 41 80         ld (level_num), a
-3339  CD71 C9               ret
-3340  CD72
-3341  CD72              InitLevel:
-3342  CD72 CD 9B BF         call ClearScreen        ; CHANGED: Fix 51 — erase ShowLevelEntry text before gameplay starts
-3343  CD75 AF               xor a                   ; CHANGED: Fix 54 — ClearScreen leaves A=1 (border colour); must zero A before zero-inits
-3344  CD76 32 1F 80         ld (plr_dead), a
-3345  CD79 32 20 80         ld (plr_dead_timer), a
-3346  CD7C 32 18 80         ld (plr_vx), a
-3347  CD7F 32 19 80         ld (plr_vy), a
-3348  CD82 32 1D 80         ld (plr_on_ground), a
-3349  CD85 32 1E 80         ld (plr_jumping), a
-3350  CD88 32 21 80         ld (plr_big), a
-3351  CD8B 21 20 00         ld hl, 32
-3352  CD8E 22 14 80         ld (plr_x), hl
-3353  CD91 21 90 00         ld hl, 144
-3354  CD94 22 16 80         ld (plr_y), hl
-3355  CD97 21 00 00         ld hl, 0
-3356  CD9A 22 35 80         ld (cam_x), hl
-3357  CD9D 21 C7 00         ld hl, 199          ; CHANGED: Fix 52 — was 200; DrawDecimal3 range is 0-199 (200 displays as '100')
-3358  CDA0 22 42 80         ld (level_timer), hl
-3359  CDA3 AF               xor a
-3360  CDA4 32 44 80         ld (timer_cnt), a
-3361  CDA7 32 95 80         ld (joy_held), a    ; CHANGED: Fix 70 — flush stale key state from TitleScreen exit.
-3362  CDAA 32 96 80         ld (joy_new), a     ; TitleScreen exits on Space press → joy_prev bit4 set → joy_new bit4=0
-3363  CDAD 32 97 80         ld (joy_prev), a    ; for first frames of gameplay → jump never triggers on first press.
-3364  CDB0
-3365  CDB0                  ; Fix 62 — initialise prev screen positions to 255 (off-screen).
-3366  CDB0                  ; Without this, prev_sx/sy = 0 on first frame → EraseSprite clears
-3367  CDB0                  ; top-left corner of screen → HUD flicker on first draw frame.
-3368  CDB0 3E FF            ld a, 255               ; CHANGED: Fix 62 — off-screen sentinel
-3369  CDB2 32 23 80         ld (plr_prev_sx), a
-3370  CDB5 32 24 80         ld (plr_prev_sy), a
-3371  CDB8 21 25 80         ld hl, ent_prev_sx
-3372  CDBB 11 26 80         ld de, ent_prev_sx+1
-3373  CDBE 01 07 00         ld bc, MAX_ENEMIES-1
-3374  CDC1 36 FF            ld (hl), 255
-3375  CDC3 ED B0            ldir                    ; CHANGED: Fix 62 — fill ent_prev_sx[0..7] = 255
-3376  CDC5 21 2D 80         ld hl, ent_prev_sy
-3377  CDC8 11 2E 80         ld de, ent_prev_sy+1
-3378  CDCB 01 07 00         ld bc, MAX_ENEMIES-1
-3379  CDCE 36 FF            ld (hl), 255
-3380  CDD0 ED B0            ldir                    ; CHANGED: Fix 62 — fill ent_prev_sy[0..7] = 255
-3381  CDD2
-3382  CDD2 21 78 80         ld hl, ent_state
-3383  CDD5 11 79 80         ld de, ent_state+1
-3384  CDD8 01 07 00         ld bc, MAX_ENEMIES-1
-3385  CDDB 36 00            ld (hl), 0
-3386  CDDD ED B0            ldir
-3387  CDDF 21 48 80         ld hl, ent_type
-3388  CDE2 11 49 80         ld de, ent_type+1
-3389  CDE5 01 07 00         ld bc, MAX_ENEMIES-1
-3390  CDE8 36 00            ld (hl), 0
-3391  CDEA ED B0            ldir
-3392  CDEC
-3393  CDEC 3A 40 80         ld a, (world)
-3394  CDEF B7               or a
-3395  CDF0 20 04            jr nz, .il_w1
-3396  CDF2 3E 00            ld a, 0
-3397  CDF4 18 0A            jr .il_setbank
-3398  CDF6              .il_w1:
-3399  CDF6 FE 01            cp 1
-3400  CDF8 20 04            jr nz, .il_w2
-3401  CDFA 3E 01            ld a, 1
-3402  CDFC 18 02            jr .il_setbank
-3403  CDFE              .il_w2:
-3404  CDFE 3E 03            ld a, 3
-3405  CE00              .il_setbank:
-3406  CE00 32 45 80         ld (cur_level_bank), a
-3407  CE03
-3408  CE03 CD AF 83         call SetLevelMapPtr
-3409  CE06
-3410  CE06                  ; DoLevelBanking lives in bank2 (fixed) — it pages in the level bank,
-3411  CE06                  ; copies map+spawns to bank2 caches, then restores bank7.
-3412  CE06                  ; CRITICAL: cannot call BankSwitch directly here (bank7 suicide). (Fix 25d)
-3413  CE06 CD CB 83         call DoLevelBanking
-3414  CE09
-3415  CE09 3A 41 80         ld a, (level_num)
-3416  CE0C FE 02            cp 2
-3417  CE0E 28 08            jr z, .il_boss_music
-3418  CE10 21 55 BE         ld hl, MUSIC_OVERWORLD
-3419  CE13 CD DB BC         call Music_Init
-3420  CE16 18 06            jr .il_music_done
-3421  CE18              .il_boss_music:
-3422  CE18 21 C9 BE         ld hl, MUSIC_BOSS
-3423  CE1B CD DB BC         call Music_Init
-3424  CE1E              .il_music_done:
-3425  CE1E
-3426  CE1E 3E 01            ld a, STATE_PLAYING
-3427  CE20 32 39 80         ld (game_state), a
-3428  CE23 C9               ret
-3429  CE24
-3430  CE24              ; SetLevelMapPtr / LoadLevelMap / LoadEnemySpawns are in bank2 (fixed)
-3431  CE24              ; so they survive BankSwitch calls during InitLevel.
-3432  CE24
-3433  CE24              ; ============================================================
-3434  CE24              ; MAIN GAME LOOP
-3435  CE24              ; ============================================================
-3436  CE24              MainLoop:
-3437  CE24 3E 01            ld a, 1
-3437  CE26 D3 FE          out ($FE), a   ; blue = entering TitleScreen
-3438  CE28 CD FD CB         call TitleScreen
-3439  CE2B
-3440  CE2B              .mg_restart:
-3441  CE2B 3E 02            ld a, 2
-3441  CE2D D3 FE          out ($FE), a   ; red = entering InitGame
-3442  CE2F CD 56 CD         call InitGame
-3443  CE32
-3444  CE32              .mg_level:
-3445  CE32 3E 03            ld a, 3
-3445  CE34 D3 FE          out ($FE), a   ; magenta = ShowLevelEntry
-3446  CE36 CD 62 CC         call ShowLevelEntry
-3447  CE39 3E 04            ld a, 4
-3447  CE3B D3 FE          out ($FE), a   ; green = InitLevel
-3448  CE3D CD 72 CD         call InitLevel
-3449  CE40 3E 05            ld a, 5
-3449  CE42 D3 FE          out ($FE), a   ; cyan = entering game loop
-3450  CE44
-3451  CE44              .mg_frame:
-3452  CE44 76               halt
-3453  CE45
-3454  CE45 3A 39 80         ld a, (game_state)
-3455  CE48 FE 01            cp STATE_PLAYING
-3456  CE4A C2 75 CE         jp nz, .mg_other
-3457  CE4D
-3458  CE4D                  ; All map data is in level_map_cache (fixed bank2). Bank7 must stay paged
-3459  CE4D                  ; for DrawCharXY_Real. We never need to page the level bank during gameplay.
-3460  CE4D
-3461  CE4D CD 6A C5         call UpdatePlayer
-3462  CE50 CD 41 C8         call UpdateEnemies
-3463  CE53 CD AA CA         call UpdatePowerup
-3464  CE56 CD 37 CD         call CheckLevelEnd
-3465  CE59
-3466  CE59                  ; Check level timer expiry
-3467  CE59 2A 42 80         ld hl, (level_timer)
-3468  CE5C 7C               ld a, h
-3469  CE5D B5               or l
-3470  CE5E 20 03            jr nz, .mg_timer_ok
-3471  CE60 CD 16 CD         call PlayerDie
-3472  CE63              .mg_timer_ok:
-3473  CE63
-3474  CE63 CD BA C2         call RenderLevel
-3475  CE66 CD 02 CB         call DrawPowerup
-3476  CE69 CD 7E C9         call DrawEnemies
-3477  CE6C CD 2F CA         call DrawPlayer
-3478  CE6F CD 29 CB         call DrawHUD
-3479  CE72
-3480  CE72 C3 44 CE         jp .mg_frame
-3481  CE75
-3482  CE75              .mg_other:
-3483  CE75 FE 02            cp STATE_DEAD
-3484  CE77 CA 8C CE         jp z, .mg_dead
-3485  CE7A FE 03            cp STATE_LEVELEND
-3486  CE7C CA D0 CE         jp z, .mg_levelend
-3487  CE7F FE 05            cp STATE_GAMEOVER
-3488  CE81 CA F2 CE         jp z, .mg_gameover
-3489  CE84 FE 06            cp STATE_WIN
-3490  CE86 CA F8 CE         jp z, .mg_win
-3491  CE89 C3 44 CE         jp .mg_frame
-3492  CE8C
-3493  CE8C              .mg_dead:
-3494  CE8C 21 20 80         ld hl, plr_dead_timer
-3495  CE8F 34               inc (hl)
-3496  CE90 7E               ld a, (hl)
-3497  CE91 FE 3C            cp 60
-3498  CE93 D2 BF CE         jp nc, .mg_respawn
-3499  CE96
-3500  CE96                  ; Death bounce
-3501  CE96 FE 19            cp 25
-3502  CE98 30 0C            jr nc, .mg_dfalling
-3503  CE9A 2A 16 80         ld hl, (plr_y)
-3504  CE9D 7D               ld a, l
-3505  CE9E D6 03            sub 3
-3506  CEA0 6F               ld l, a
-3507  CEA1 22 16 80         ld (plr_y), hl
-3508  CEA4 18 0A            jr .mg_drender
-3509  CEA6              .mg_dfalling:
-3510  CEA6 2A 16 80         ld hl, (plr_y)
-3511  CEA9 7D               ld a, l
-3512  CEAA C6 04            add a, 4
-3513  CEAC 6F               ld l, a
-3514  CEAD 22 16 80         ld (plr_y), hl
-3515  CEB0
-3516  CEB0              .mg_drender:
-3517  CEB0 CD BA C2         call RenderLevel
-3518  CEB3 CD 7E C9         call DrawEnemies        ; CHANGED: Fix 64 — erase+redraw enemies during death anim to clear trails
-3519  CEB6 CD 2F CA         call DrawPlayer
-3520  CEB9 CD 29 CB         call DrawHUD
-3521  CEBC C3 44 CE         jp .mg_frame
-3522  CEBF
-3523  CEBF              .mg_respawn:
-3524  CEBF 21 3E 80         ld hl, lives
-3525  CEC2 35               dec (hl)
-3526  CEC3 7E               ld a, (hl)
-3527  CEC4 B7               or a
-3528  CEC5 CA F2 CE         jp z, .mg_gameover
-3529  CEC8 3E 01            ld a, STATE_PLAYING
-3530  CECA 32 39 80         ld (game_state), a
-3531  CECD                  ; Fix 36: removed 'call InitLevel' here — jp .mg_level calls ShowLevelEntry
-3532  CECD                  ; then InitLevel, so calling InitLevel here was doing a full double-init.
-3533  CECD C3 32 CE         jp .mg_level
-3534  CED0
-3535  CED0              .mg_levelend:
-3536  CED0 06 64            ld b, 100
-3537  CED2              .mg_le_wait:
-3538  CED2 76               halt
-3539  CED3 10 FD            djnz .mg_le_wait
-3540  CED5
-3541  CED5 21 41 80         ld hl, level_num
-3542  CED8 34               inc (hl)
-3543  CED9 7E               ld a, (hl)
-3544  CEDA FE 03            cp 3
-3545  CEDC 20 0C            jr nz, .mg_nextlevel
-3546  CEDE 36 00            ld (hl), 0
-3547  CEE0 21 40 80         ld hl, world
-3548  CEE3 34               inc (hl)
-3549  CEE4 7E               ld a, (hl)
-3550  CEE5 FE 03            cp 3
-3551  CEE7 D2 F8 CE         jp nc, .mg_win
-3552  CEEA              .mg_nextlevel:
-3553  CEEA 3E 01            ld a, STATE_PLAYING
-3554  CEEC 32 39 80         ld (game_state), a
-3555  CEEF C3 32 CE         jp .mg_level
-3556  CEF2
-3557  CEF2              .mg_gameover:
-3558  CEF2 CD AC CC         call ShowGameOver
-3559  CEF5 C3 2B CE         jp .mg_restart
-3560  CEF8
-3561  CEF8              .mg_win:
-3562  CEF8 CD CA CC         call ShowVictory
-3563  CEFB C3 2B CE         jp .mg_restart
-3564  CEFE
-3565  CEFE              ; ============================================================
-3566  CEFE              ; IM2 VECTOR TABLE
-3567  CEFE              ; ============================================================
-3568  CEFE                  ORG IM2_TABLE
+2847  C9EC
+2848  C9EC                  ; Fix 72 — erase at previous position BEFORE screen_y guard.
+2849  C9EC                  ; IYL = entity index (set at loop entry, still valid here).
+2850  C9EC                  ; Fix 66 sentinel (ent_prev_sy=255) still guards EraseSprite.
+2851  C9EC 16 00            ld d, 0
+2852  C9EE FD 5D            ld e, iyl           ; DE = entity index
+2853  C9F0 21 2D 80         ld hl, ent_prev_sy
+2854  C9F3 19               add hl, de
+2855  C9F4 7E               ld a, (hl)
+2856  C9F5 FE FF            cp 255              ; 255 = never drawn this level, skip erase
+2857  C9F7 28 11            jr z, .den_skip_erase
+2858  C9F9 21 25 80         ld hl, ent_prev_sx
+2859  C9FC 19               add hl, de
+2860  C9FD 46               ld b, (hl)          ; B = prev screen_x
+2861  C9FE D5               push de             ; save entity index
+2862  C9FF C5               push bc             ; save new screen_y in C (B=prev_sx, will be overwritten but C is what matters)
+2863  CA00 21 2D 80         ld hl, ent_prev_sy
+2864  CA03 19               add hl, de
+2865  CA04 4E               ld c, (hl)          ; C = prev screen_y
+2866  CA05 CD 29 C5         call EraseSprite
+2867  CA08 C1               pop bc              ; restore C = new screen_y
+2868  CA09 D1               pop de              ; restore entity index
+2869  CA0A              .den_skip_erase:        ; CHANGED: Fix 72
+2870  CA0A
+2871  CA0A FD 44            ld b, iyh           ; screen_x
+2872  CA0C FE B0            cp 176              ; CHANGED: Fix 60 — was 177
+2873  CA0E D2 22 CA         jp nc, .den_skip    ; CHANGED: Fix 49 — screen_y >= 176 corrupts attr/sysvar
+2874  CA11
+2875  CA11 CD A8 C4         call DrawSprite
+2876  CA14
+2877  CA14 16 00            ld d, 0             ; CHANGED: Fix 53 — store new screen_x/screen_y as prev
+2878  CA16 FD 5D            ld e, iyl
+2879  CA18 21 25 80         ld hl, ent_prev_sx
+2880  CA1B 19               add hl, de
+2881  CA1C 70               ld (hl), b
+2882  CA1D 21 2D 80         ld hl, ent_prev_sy
+2883  CA20 19               add hl, de
+2884  CA21 71               ld (hl), c
+2885  CA22
+2886  CA22              .den_skip:
+2887  CA22 C1               pop bc
+2888  CA23                  ; Restore entity index from IYL for inc/loop
+2889  CA23 FD 7D            ld a, iyl
+2890  CA25 4F               ld c, a
+2891  CA26 0C               inc c
+2892  CA27 05               dec b               ; Fix 35: djnz can't reach .den_loop (loop body > 127 bytes)
+2893  CA28 C2 87 C9         jp nz, .den_loop
+2894  CA2B
+2895  CA2B FD E1            pop iy
+2896  CA2D DD E1            pop ix
+2897  CA2F C1               pop bc
+2898  CA30 C9               ret
+2899  CA31
+2900  CA31              ; ============================================================
+2901  CA31              ; DRAW PLAYER
+2902  CA31              ; ============================================================
+2903  CA31              DrawPlayer:
+2904  CA31 DD E5            push ix
+2905  CA33 C5               push bc
+2906  CA34
+2907  CA34 3A 1F 80         ld a, (plr_dead)
+2908  CA37 B7               or a
+2909  CA38 20 2B            jr nz, .dp_dead
+2910  CA3A
+2911  CA3A 3A 1D 80         ld a, (plr_on_ground)
+2912  CA3D B7               or a
+2913  CA3E 28 1F            jr z, .dp_jumping
+2914  CA40
+2915  CA40 3A 18 80         ld a, (plr_vx)
+2916  CA43 B7               or a
+2917  CA44 28 13            jr z, .dp_standing
+2918  CA46
+2919  CA46 3A 1B 80         ld a, (plr_anim)
+2920  CA49 E6 01            and $01
+2921  CA4B 28 06            jr z, .dp_walk1
+2922  CA4D DD 21 68 C3      ld ix, SPR_MARCO_WALK2
+2923  CA51 18 16            jr .dp_draw
+2924  CA53              .dp_walk1:
+2925  CA53 DD 21 48 C3      ld ix, SPR_MARCO_WALK1
+2926  CA57 18 10            jr .dp_draw
+2927  CA59              .dp_standing:
+2928  CA59 DD 21 28 C3      ld ix, SPR_MARCO_STAND
+2929  CA5D 18 0A            jr .dp_draw
+2930  CA5F              .dp_jumping:
+2931  CA5F DD 21 88 C3      ld ix, SPR_MARCO_JUMP
+2932  CA63 18 04            jr .dp_draw
+2933  CA65              .dp_dead:
+2934  CA65 DD 21 88 C3      ld ix, SPR_MARCO_JUMP
+2935  CA69
+2936  CA69              .dp_draw:
+2937  CA69                  ; Fix 72 — erase at previous position BEFORE screen_y guard.
+2938  CA69                  ; Old code skipped erase when guard fired → old pixels left on screen → jump trail.
+2939  CA69                  ; Fix 66 sentinel (prev_sy=255) still guards EraseSprite itself.
+2940  CA69 3A 24 80         ld a, (plr_prev_sy)
+2941  CA6C FE FF            cp 255              ; 255 = never drawn this level, skip erase
+2942  CA6E 28 0B            jr z, .dp_skip_erase
+2943  CA70 3A 23 80         ld a, (plr_prev_sx)
+2944  CA73 47               ld b, a             ; prev screen_x
+2945  CA74 3A 24 80         ld a, (plr_prev_sy)
+2946  CA77 4F               ld c, a             ; prev screen_y
+2947  CA78 CD 29 C5         call EraseSprite
+2948  CA7B              .dp_skip_erase:
+2949  CA7B
+2950  CA7B                  ; Fix 32: 16-bit screen_x = plr_x - cam_x
+2951  CA7B                  ; plr_x and cam_x are both DW; using only low byte fails once x > 255.
+2952  CA7B 2A 14 80         ld hl, (plr_x)
+2953  CA7E ED 5B 35 80      ld de, (cam_x)
+2954  CA82 A7               and a               ; clear carry
+2955  CA83 ED 52            sbc hl, de          ; HL = plr_x - cam_x (signed 16-bit)
+2956  CA85 DA A2 CA         jp c, .dp_done      ; negative: player left of camera, don't draw
+2957  CA88 7C               ld a, h
+2958  CA89 B7               or a
+2959  CA8A C2 A2 CA         jp nz, .dp_done     ; >= 256: off right edge, don't draw
+2960  CA8D 45               ld b, l             ; screen_x (0..255)
+2961  CA8E
+2962  CA8E 3A 16 80         ld a, (plr_y)
+2963  CA91 4F               ld c, a             ; screen_y
+2964  CA92 FE B0            cp 176              ; CHANGED: Fix 60 — was 177
+2965  CA94 D2 A2 CA         jp nc, .dp_done     ; CHANGED: Fix 49 — screen_y >= 176 corrupts attr/sysvar area
+2966  CA97
+2967  CA97 CD A8 C4         call DrawSprite
+2968  CA9A
+2969  CA9A 78               ld a, b             ; CHANGED: Fix 53 — store new screen_x/screen_y as prev for next frame
+2970  CA9B 32 23 80         ld (plr_prev_sx), a
+2971  CA9E 79               ld a, c
+2972  CA9F 32 24 80         ld (plr_prev_sy), a
+2973  CAA2              .dp_done:
+2974  CAA2
+2975  CAA2 C1               pop bc
+2976  CAA3 DD E1            pop ix
+2977  CAA5 C9               ret
+2978  CAA6
+2979  CAA6              ; ============================================================
+2980  CAA6              ; POWERUP
+2981  CAA6              ; ============================================================
+2982  CAA6              UpdatePowerup:
+2983  CAA6 3A 93 80         ld a, (pwrup_active)
+2984  CAA9 B7               or a
+2985  CAAA C8               ret z
+2986  CAAB
+2987  CAAB 3A 94 80         ld a, (pwrup_vy)
+2988  CAAE 3C               inc a
+2989  CAAF FE 05            cp 5
+2990  CAB1 38 02            jr c, .upw_ok
+2991  CAB3 3E 04            ld a, 4
+2992  CAB5              .upw_ok:
+2993  CAB5 32 94 80         ld (pwrup_vy), a
+2994  CAB8 21 92 80         ld hl, pwrup_yl
+2995  CABB 86               add a, (hl)
+2996  CABC 77               ld (hl), a
+2997  CABD
+2998  CABD                  ; Check overlap with player
+2999  CABD 3A 90 80         ld a, (pwrup_xl)
+3000  CAC0 47               ld b, a
+3001  CAC1 3A 14 80         ld a, (plr_x)
+3002  CAC4 90               sub b
+3003  CAC5 FA CF CA         jp m, .upw_xneg
+3004  CAC8 FE 1C            cp PLR_W + 16
+3005  CACA D2 FD CA         jp nc, .upw_no
+3006  CACD 18 07            jr .upw_y
+3007  CACF              .upw_xneg:
+3008  CACF ED 44            neg
+3009  CAD1 FE 10            cp 16
+3010  CAD3 D2 FD CA         jp nc, .upw_no
+3011  CAD6              .upw_y:
+3012  CAD6 3A 92 80         ld a, (pwrup_yl)
+3013  CAD9 47               ld b, a
+3014  CADA 3A 16 80         ld a, (plr_y)
+3015  CADD 90               sub b
+3016  CADE FA E8 CA         jp m, .upw_yneg
+3017  CAE1 FE 1E            cp PLR_H + 16
+3018  CAE3 D2 FD CA         jp nc, .upw_no
+3019  CAE6 18 07            jr .upw_collect
+3020  CAE8              .upw_yneg:
+3021  CAE8 ED 44            neg
+3022  CAEA FE 10            cp 16
+3023  CAEC D2 FD CA         jp nc, .upw_no
+3024  CAEF              .upw_collect:
+3025  CAEF AF               xor a
+3026  CAF0 32 93 80         ld (pwrup_active), a
+3027  CAF3 3E 01            ld a, 1
+3028  CAF5 32 21 80         ld (plr_big), a
+3029  CAF8 3E 05            ld a, SFX_POWERUP
+3030  CAFA CD 62 BD         call SFX_Play
+3031  CAFD              .upw_no:
+3032  CAFD C9               ret
+3033  CAFE
+3034  CAFE              DrawPowerup:
+3035  CAFE 3A 93 80         ld a, (pwrup_active)
+3036  CB01 B7               or a
+3037  CB02 C8               ret z
+3038  CB03 DD 21 48 C4      ld ix, SPR_PWRUP
+3039  CB07                  ; Fix 38: 16-bit screen_x = pwrup_x - cam_x
+3040  CB07                  ; pwrup_xl is 8-bit so build 16-bit value via L
+3041  CB07 21 00 00         ld hl, 0
+3042  CB0A 3A 90 80         ld a, (pwrup_xl)
+3043  CB0D 6F               ld l, a             ; HL = pwrup_x (zero-extended to 16 bits)
+3044  CB0E ED 5B 35 80      ld de, (cam_x)
+3045  CB12 A7               and a               ; clear carry
+3046  CB13 ED 52            sbc hl, de          ; HL = pwrup_x - cam_x
+3047  CB15 D8               ret c               ; negative: off left of screen
+3048  CB16 7C               ld a, h
+3049  CB17 B7               or a
+3050  CB18 C0               ret nz              ; >= 256: off right of screen
+3051  CB19 45               ld b, l             ; screen_x
+3052  CB1A 3A 92 80         ld a, (pwrup_yl)
+3053  CB1D 4F               ld c, a
+3054  CB1E FE B0            cp 176              ; CHANGED: Fix 60 — was 177; screen_y=176 attr bottom row writes $5B00 (sysvar)
+3055  CB20 D0               ret nc              ; CHANGED: Fix 49 — skip draw (no pushed regs to restore, plain ret)
+3056  CB21 CD A8 C4         call DrawSprite
+3057  CB24 C9               ret
+3058  CB25
+3059  CB25              ; ============================================================
+3060  CB25              ; HUD
+3061  CB25              ; ============================================================
+3062  CB25              DrawHUD:
+3063  CB25 E5               push hl
+3064  CB26 C5               push bc
+3065  CB27
+3066  CB27 21 00 58         ld hl, ATTR_BASE
+3067  CB2A 06 40            ld b, 64
+3068  CB2C              .hud_clr:
+3069  CB2C 36 07            ld (hl), $07
+3070  CB2E 23               inc hl
+3071  CB2F 10 FB            djnz .hud_clr
+3072  CB31
+3073  CB31 21 DC CB         ld hl, STR_SCORE
+3074  CB34 06 00            ld b, 0
+3075  CB36 0E 00            ld c, 0
+3076  CB38 CD 6E C0         call DrawString
+3077  CB3B
+3078  CB3B                  ; Fix 40: display 4 BCD digits: score[1] hi, score[1] lo, score[0] hi, score[0] lo
+3079  CB3B                  ; score[1] = hundreds/thousands column, score[0] = ones/tens column
+3080  CB3B 3A 3B 80         ld a, (score+1)
+3081  CB3E F5               push af
+3082  CB3F 0F               rrca
+3083  CB40 0F               rrca
+3084  CB41 0F               rrca
+3085  CB42 0F               rrca
+3086  CB43 E6 0F            and $0F
+3087  CB45 C6 30            add a, '0'
+3088  CB47 06 06            ld b, 6
+3089  CB49 0E 00            ld c, 0
+3090  CB4B CD FD BF         call DrawCharXY     ; thousands digit
+3091  CB4E
+3092  CB4E 04               inc b
+3093  CB4F F1               pop af
+3094  CB50 E6 0F            and $0F
+3095  CB52 C6 30            add a, '0'
+3096  CB54 CD FD BF         call DrawCharXY     ; hundreds digit
+3097  CB57
+3098  CB57 04               inc b
+3099  CB58 3A 3A 80         ld a, (score)
+3100  CB5B F5               push af
+3101  CB5C 0F               rrca
+3102  CB5D 0F               rrca
+3103  CB5E 0F               rrca
+3104  CB5F 0F               rrca
+3105  CB60 E6 0F            and $0F
+3106  CB62 C6 30            add a, '0'
+3107  CB64 CD FD BF         call DrawCharXY     ; tens digit
+3108  CB67
+3109  CB67 04               inc b
+3110  CB68 F1               pop af
+3111  CB69 E6 0F            and $0F
+3112  CB6B C6 30            add a, '0'
+3113  CB6D CD FD BF         call DrawCharXY     ; units digit
+3114  CB70
+3115  CB70 21 E2 CB         ld hl, STR_WORLD
+3116  CB73 06 10            ld b, 16
+3117  CB75 0E 00            ld c, 0
+3118  CB77 CD 6E C0         call DrawString
+3119  CB7A 3A 40 80         ld a, (world)
+3120  CB7D 3C               inc a
+3121  CB7E C6 30            add a, '0'
+3122  CB80 06 16            ld b, 22
+3123  CB82 0E 00            ld c, 0
+3124  CB84 CD FD BF         call DrawCharXY
+3125  CB87 3E 2D            ld a, '-'
+3126  CB89 06 17            ld b, 23
+3127  CB8B 0E 00            ld c, 0
+3128  CB8D CD FD BF         call DrawCharXY
+3129  CB90 3A 41 80         ld a, (level_num)
+3130  CB93 3C               inc a
+3131  CB94 C6 30            add a, '0'
+3132  CB96 06 18            ld b, 24
+3133  CB98 0E 00            ld c, 0
+3134  CB9A CD FD BF         call DrawCharXY
+3135  CB9D
+3136  CB9D 21 E8 CB         ld hl, STR_LIVES
+3137  CBA0 06 00            ld b, 0
+3138  CBA2 0E 01            ld c, 1
+3139  CBA4 CD 6E C0         call DrawString
+3140  CBA7 3A 3E 80         ld a, (lives)
+3141  CBAA 06 06            ld b, 6
+3142  CBAC 0E 01            ld c, 1
+3143  CBAE CD 7E C0         call DrawDigit
+3144  CBB1
+3145  CBB1 21 EE CB         ld hl, STR_TIME
+3146  CBB4 06 14            ld b, 20
+3147  CBB6 0E 01            ld c, 1
+3148  CBB8 CD 6E C0         call DrawString
+3149  CBBB 3A 42 80         ld a, (level_timer)     ; low byte (0-199)
+3150  CBBE 06 19            ld b, 25
+3151  CBC0 0E 01            ld c, 1
+3152  CBC2 CD A1 C0         call DrawDecimal3
+3153  CBC5
+3154  CBC5 21 F3 CB         ld hl, STR_COINS
+3155  CBC8 06 00            ld b, 0
+3156  CBCA 0E 02            ld c, 2
+3157  CBCC CD 6E C0         call DrawString
+3158  CBCF 3A 3F 80         ld a, (coins)
+3159  CBD2 06 06            ld b, 6
+3160  CBD4 0E 02            ld c, 2
+3161  CBD6 CD 83 C0         call DrawDecimal2
+3162  CBD9
+3163  CBD9 C1               pop bc
+3164  CBDA E1               pop hl
+3165  CBDB C9               ret
+3166  CBDC
+3167  CBDC 53 43 4F 52  STR_SCORE:  DEFB "SCORE", 0
+3167  CBE0 45 00
+3168  CBE2 57 4F 52 4C  STR_WORLD:  DEFB "WORLD", 0
+3168  CBE6 44 00
+3169  CBE8 4C 49 56 45  STR_LIVES:  DEFB "LIVES", 0
+3169  CBEC 53 00
+3170  CBEE 54 49 4D 45  STR_TIME:   DEFB "TIME", 0
+3170  CBF2 00
+3171  CBF3 43 4F 49 4E  STR_COINS:  DEFB "COINS", 0
+3171  CBF7 53 00
+3172  CBF9
+3173  CBF9              ; ============================================================
+3174  CBF9              ; TITLE SCREEN
+3175  CBF9              ; ============================================================
+3176  CBF9              TitleScreen:
+3177  CBF9 CD 9B BF         call ClearScreen
+3178  CBFC 3E 01            ld a, 1
+3179  CBFE D3 FE            out (PORT_ULA), a
+3180  CC00
+3181  CC00 21 30 CC         ld hl, STR_TITLE1
+3182  CC03 06 09            ld b, 9
+3183  CC05 0E 08            ld c, 8
+3184  CC07 CD 6E C0         call DrawString
+3185  CC0A
+3186  CC0A 21 3F CC         ld hl, STR_TITLE2
+3187  CC0D 06 07            ld b, 7
+3188  CC0F 0E 0A            ld c, 10
+3189  CC11 CD 6E C0         call DrawString
+3190  CC14
+3191  CC14 21 50 CC         ld hl, STR_TITLE3
+3192  CC17 06 04            ld b, 4
+3193  CC19 0E 12            ld c, 18
+3194  CC1B CD 6E C0         call DrawString
+3195  CC1E
+3196  CC1E 21 1F BF         ld hl, MUSIC_TITLE
+3197  CC21 CD DB BC         call Music_Init
+3198  CC24
+3199  CC24              .ts_wait:
+3200  CC24 76               halt
+3201  CC25 3A 96 80         ld a, (joy_new)
+3202  CC28 CB 67            bit 4, a
+3203  CC2A 28 F8            jr z, .ts_wait
+3204  CC2C
+3205  CC2C CD EB BC         call Music_Stop
+3206  CC2F C9               ret
+3207  CC30
+3208  CC30 4D 41 52 43  STR_TITLE1: DEFB "MARCO BROS 128", 0
+3208  CC34 4F 20 42 52
+3208  CC38 4F 53 20 31
+3208  CC3C 32 38 00
+3209  CC3F 5A 58 20 53  STR_TITLE2: DEFB "ZX SPECTRUM 128K", 0
+3209  CC43 50 45 43 54
+3209  CC47 52 55 4D 20
+3209  CC4B 31 32 38 4B
+3209  CC4F 00
+3210  CC50 46 49 52 45  STR_TITLE3: DEFB "FIRE TO START", 0
+3210  CC54 20 54 4F 20
+3210  CC58 53 54 41 52
+3210  CC5C 54 00
+3211  CC5E
+3212  CC5E              ShowLevelEntry:
+3213  CC5E CD 9B BF         call ClearScreen
+3214  CC61 21 E2 CB         ld hl, STR_WORLD
+3215  CC64 06 0A            ld b, 10
+3216  CC66 0E 0A            ld c, 10
+3217  CC68 CD 6E C0         call DrawString
+3218  CC6B 3A 40 80         ld a, (world)
+3219  CC6E 3C               inc a
+3220  CC6F C6 30            add a, '0'
+3221  CC71 06 10            ld b, 16
+3222  CC73 0E 0A            ld c, 10
+3223  CC75 CD FD BF         call DrawCharXY
+3224  CC78 3E 2D            ld a, '-'
+3225  CC7A 06 11            ld b, 17
+3226  CC7C 0E 0A            ld c, 10
+3227  CC7E CD FD BF         call DrawCharXY
+3228  CC81 3A 41 80         ld a, (level_num)
+3229  CC84 3C               inc a
+3230  CC85 C6 30            add a, '0'
+3231  CC87 06 12            ld b, 18
+3232  CC89 0E 0A            ld c, 10
+3233  CC8B CD FD BF         call DrawCharXY
+3234  CC8E 21 E8 CB         ld hl, STR_LIVES
+3235  CC91 06 09            ld b, 9
+3236  CC93 0E 0E            ld c, 14
+3237  CC95 CD 6E C0         call DrawString
+3238  CC98 3A 3E 80         ld a, (lives)
+3239  CC9B 06 10            ld b, 16
+3240  CC9D 0E 0E            ld c, 14
+3241  CC9F CD 7E C0         call DrawDigit
+3242  CCA2 06 64            ld b, 100
+3243  CCA4              .sle_wait:
+3244  CCA4 76               halt
+3245  CCA5 10 FD            djnz .sle_wait
+3246  CCA7 C9               ret
+3247  CCA8
+3248  CCA8              ShowGameOver:
+3249  CCA8 CD EB BC         call Music_Stop
+3250  CCAB CD 9B BF         call ClearScreen
+3251  CCAE 21 EF CC         ld hl, STR_GAMEOVER
+3252  CCB1 06 08            ld b, 8
+3253  CCB3 0E 0B            ld c, 11
+3254  CCB5 CD 6E C0         call DrawString
+3255  CCB8 06 78            ld b, 120
+3256  CCBA              .sgo_wait:
+3257  CCBA 76               halt
+3258  CCBB 10 FD            djnz .sgo_wait
+3259  CCBD              .sgo_fire:
+3260  CCBD 76               halt
+3261  CCBE 3A 96 80         ld a, (joy_new)
+3262  CCC1 CB 67            bit 4, a
+3263  CCC3 28 F8            jr z, .sgo_fire
+3264  CCC5 C9               ret
+3265  CCC6
+3266  CCC6              ShowVictory:
+3267  CCC6 CD EB BC         call Music_Stop
+3268  CCC9 CD 9B BF         call ClearScreen
+3269  CCCC 21 F9 CC         ld hl, STR_WIN1
+3270  CCCF 06 07            ld b, 7
+3271  CCD1 0E 09            ld c, 9
+3272  CCD3 CD 6E C0         call DrawString
+3273  CCD6 21 02 CD         ld hl, STR_WIN2
+3274  CCD9 06 06            ld b, 6
+3275  CCDB 0E 0C            ld c, 12
+3276  CCDD CD 6E C0         call DrawString
+3277  CCE0 21 1F BF         ld hl, MUSIC_TITLE
+3278  CCE3 CD DB BC         call Music_Init
+3279  CCE6 06 00            ld b, 0
+3280  CCE8              .sv_wait:
+3281  CCE8 76               halt
+3282  CCE9 10 FD            djnz .sv_wait
+3283  CCEB CD EB BC         call Music_Stop
+3284  CCEE C9               ret
+3285  CCEF
+3286  CCEF 47 41 4D 45  STR_GAMEOVER: DEFB "GAME OVER", 0
+3286  CCF3 20 4F 56 45
+3286  CCF7 52 00
+3287  CCF9 59 4F 55 20  STR_WIN1:     DEFB "YOU WIN!", 0
+3287  CCFD 57 49 4E 21
+3287  CD01 00
+3288  CD02 43 4F 4E 47  STR_WIN2:     DEFB "CONGRATULATIONS", 0
+3288  CD06 52 41 54 55
+3288  CD0A 4C 41 54 49
+3288  CD0E 4F 4E 53 00
+3289  CD12
+3290  CD12              PlayerDie:
+3291  CD12 3A 1F 80         ld a, (plr_dead)
+3292  CD15 B7               or a
+3293  CD16 C0               ret nz
+3294  CD17 3E 01            ld a, 1
+3295  CD19 32 1F 80         ld (plr_dead), a
+3296  CD1C AF               xor a
+3297  CD1D 32 20 80         ld (plr_dead_timer), a
+3298  CD20 3E F8            ld a, 256 - 8
+3299  CD22 32 19 80         ld (plr_vy), a
+3300  CD25 3E 02            ld a, STATE_DEAD
+3301  CD27 32 39 80         ld (game_state), a
+3302  CD2A 3E 04            ld a, SFX_DIE
+3303  CD2C CD 62 BD         call SFX_Play
+3304  CD2F CD EB BC         call Music_Stop
+3305  CD32 C9               ret
+3306  CD33
+3307  CD33              CheckLevelEnd:
+3308  CD33                  ; Centre probe: pixel_x = plr_x + 8, pixel_y = plr_y + 8
+3309  CD33 2A 16 80         ld hl, (plr_y)
+3310  CD36 7D               ld a, l
+3311  CD37 C6 08            add a, 8
+3312  CD39 47               ld b, a             ; B = pixel_y — Fix 33
+3313  CD3A 2A 14 80         ld hl, (plr_x)      ; HL = plr_x (16-bit) — Fix 33
+3314  CD3D 11 08 00         ld de, 8
+3315  CD40 19               add hl, de          ; HL = plr_x + 8
+3316  CD41 CD 74 C6         call GetTileAt
+3317  CD44 FE 06            cp TILE_FLAG
+3318  CD46 C0               ret nz
+3319  CD47 3E 03            ld a, STATE_LEVELEND
+3320  CD49 32 39 80         ld (game_state), a
+3321  CD4C 3E 07            ld a, SFX_LEVELEND
+3322  CD4E CD 62 BD         call SFX_Play
+3323  CD51 C9               ret
+3324  CD52
+3325  CD52              ; ============================================================
+3326  CD52              ; INIT
+3327  CD52              ; ============================================================
+3328  CD52              InitGame:
+3329  CD52 3E 03            ld a, 3
+3330  CD54 32 3E 80         ld (lives), a
+3331  CD57 AF               xor a
+3332  CD58 32 3A 80         ld (score), a
+3333  CD5B 32 3B 80         ld (score+1), a
+3334  CD5E 32 3C 80         ld (score+2), a
+3335  CD61 32 3D 80         ld (score+3), a
+3336  CD64 32 3F 80         ld (coins), a
+3337  CD67 32 40 80         ld (world), a
+3338  CD6A 32 41 80         ld (level_num), a
+3339  CD6D C9               ret
+3340  CD6E
+3341  CD6E              InitLevel:
+3342  CD6E CD 9B BF         call ClearScreen        ; CHANGED: Fix 51 — erase ShowLevelEntry text before gameplay starts
+3343  CD71 AF               xor a                   ; CHANGED: Fix 54 — ClearScreen leaves A=1 (border colour); must zero A before zero-inits
+3344  CD72 32 1F 80         ld (plr_dead), a
+3345  CD75 32 20 80         ld (plr_dead_timer), a
+3346  CD78 32 18 80         ld (plr_vx), a
+3347  CD7B 32 19 80         ld (plr_vy), a
+3348  CD7E 32 1D 80         ld (plr_on_ground), a
+3349  CD81 32 1E 80         ld (plr_jumping), a
+3350  CD84 32 21 80         ld (plr_big), a
+3351  CD87 21 20 00         ld hl, 32
+3352  CD8A 22 14 80         ld (plr_x), hl
+3353  CD8D 21 90 00         ld hl, 144
+3354  CD90 22 16 80         ld (plr_y), hl
+3355  CD93 21 00 00         ld hl, 0
+3356  CD96 22 35 80         ld (cam_x), hl
+3357  CD99 21 C7 00         ld hl, 199          ; CHANGED: Fix 52 — was 200; DrawDecimal3 range is 0-199 (200 displays as '100')
+3358  CD9C 22 42 80         ld (level_timer), hl
+3359  CD9F AF               xor a
+3360  CDA0 32 44 80         ld (timer_cnt), a
+3361  CDA3 32 95 80         ld (joy_held), a    ; CHANGED: Fix 70 — flush stale key state from TitleScreen exit.
+3362  CDA6 32 96 80         ld (joy_new), a     ; TitleScreen exits on Space press → joy_prev bit4 set → joy_new bit4=0
+3363  CDA9 32 97 80         ld (joy_prev), a    ; for first frames of gameplay → jump never triggers on first press.
+3364  CDAC
+3365  CDAC                  ; Fix 62 — initialise prev screen positions to 255 (off-screen).
+3366  CDAC                  ; Without this, prev_sx/sy = 0 on first frame → EraseSprite clears
+3367  CDAC                  ; top-left corner of screen → HUD flicker on first draw frame.
+3368  CDAC 3E FF            ld a, 255               ; CHANGED: Fix 62 — off-screen sentinel
+3369  CDAE 32 23 80         ld (plr_prev_sx), a
+3370  CDB1 32 24 80         ld (plr_prev_sy), a
+3371  CDB4 21 25 80         ld hl, ent_prev_sx
+3372  CDB7 11 26 80         ld de, ent_prev_sx+1
+3373  CDBA 01 07 00         ld bc, MAX_ENEMIES-1
+3374  CDBD 36 FF            ld (hl), 255
+3375  CDBF ED B0            ldir                    ; CHANGED: Fix 62 — fill ent_prev_sx[0..7] = 255
+3376  CDC1 21 2D 80         ld hl, ent_prev_sy
+3377  CDC4 11 2E 80         ld de, ent_prev_sy+1
+3378  CDC7 01 07 00         ld bc, MAX_ENEMIES-1
+3379  CDCA 36 FF            ld (hl), 255
+3380  CDCC ED B0            ldir                    ; CHANGED: Fix 62 — fill ent_prev_sy[0..7] = 255
+3381  CDCE
+3382  CDCE 21 78 80         ld hl, ent_state
+3383  CDD1 11 79 80         ld de, ent_state+1
+3384  CDD4 01 07 00         ld bc, MAX_ENEMIES-1
+3385  CDD7 36 00            ld (hl), 0
+3386  CDD9 ED B0            ldir
+3387  CDDB 21 48 80         ld hl, ent_type
+3388  CDDE 11 49 80         ld de, ent_type+1
+3389  CDE1 01 07 00         ld bc, MAX_ENEMIES-1
+3390  CDE4 36 00            ld (hl), 0
+3391  CDE6 ED B0            ldir
+3392  CDE8
+3393  CDE8 3A 40 80         ld a, (world)
+3394  CDEB B7               or a
+3395  CDEC 20 04            jr nz, .il_w1
+3396  CDEE 3E 00            ld a, 0
+3397  CDF0 18 0A            jr .il_setbank
+3398  CDF2              .il_w1:
+3399  CDF2 FE 01            cp 1
+3400  CDF4 20 04            jr nz, .il_w2
+3401  CDF6 3E 01            ld a, 1
+3402  CDF8 18 02            jr .il_setbank
+3403  CDFA              .il_w2:
+3404  CDFA 3E 03            ld a, 3
+3405  CDFC              .il_setbank:
+3406  CDFC 32 45 80         ld (cur_level_bank), a
+3407  CDFF
+3408  CDFF CD AF 83         call SetLevelMapPtr
+3409  CE02
+3410  CE02                  ; DoLevelBanking lives in bank2 (fixed) — it pages in the level bank,
+3411  CE02                  ; copies map+spawns to bank2 caches, then restores bank7.
+3412  CE02                  ; CRITICAL: cannot call BankSwitch directly here (bank7 suicide). (Fix 25d)
+3413  CE02 CD CB 83         call DoLevelBanking
+3414  CE05
+3415  CE05 3A 41 80         ld a, (level_num)
+3416  CE08 FE 02            cp 2
+3417  CE0A 28 08            jr z, .il_boss_music
+3418  CE0C 21 55 BE         ld hl, MUSIC_OVERWORLD
+3419  CE0F CD DB BC         call Music_Init
+3420  CE12 18 06            jr .il_music_done
+3421  CE14              .il_boss_music:
+3422  CE14 21 C9 BE         ld hl, MUSIC_BOSS
+3423  CE17 CD DB BC         call Music_Init
+3424  CE1A              .il_music_done:
+3425  CE1A
+3426  CE1A 3E 01            ld a, STATE_PLAYING
+3427  CE1C 32 39 80         ld (game_state), a
+3428  CE1F C9               ret
+3429  CE20
+3430  CE20              ; SetLevelMapPtr / LoadLevelMap / LoadEnemySpawns are in bank2 (fixed)
+3431  CE20              ; so they survive BankSwitch calls during InitLevel.
+3432  CE20
+3433  CE20              ; ============================================================
+3434  CE20              ; MAIN GAME LOOP
+3435  CE20              ; ============================================================
+3436  CE20              MainLoop:
+3437  CE20 3E 01            ld a, 1
+3437  CE22 D3 FE          out ($FE), a   ; blue = entering TitleScreen
+3438  CE24 CD F9 CB         call TitleScreen
+3439  CE27
+3440  CE27              .mg_restart:
+3441  CE27 3E 02            ld a, 2
+3441  CE29 D3 FE          out ($FE), a   ; red = entering InitGame
+3442  CE2B CD 52 CD         call InitGame
+3443  CE2E
+3444  CE2E              .mg_level:
+3445  CE2E 3E 03            ld a, 3
+3445  CE30 D3 FE          out ($FE), a   ; magenta = ShowLevelEntry
+3446  CE32 CD 5E CC         call ShowLevelEntry
+3447  CE35 3E 04            ld a, 4
+3447  CE37 D3 FE          out ($FE), a   ; green = InitLevel
+3448  CE39 CD 6E CD         call InitLevel
+3449  CE3C 3E 05            ld a, 5
+3449  CE3E D3 FE          out ($FE), a   ; cyan = entering game loop
+3450  CE40
+3451  CE40              .mg_frame:
+3452  CE40 76               halt
+3453  CE41
+3454  CE41 3A 39 80         ld a, (game_state)
+3455  CE44 FE 01            cp STATE_PLAYING
+3456  CE46 C2 71 CE         jp nz, .mg_other
+3457  CE49
+3458  CE49                  ; All map data is in level_map_cache (fixed bank2). Bank7 must stay paged
+3459  CE49                  ; for DrawCharXY_Real. We never need to page the level bank during gameplay.
+3460  CE49
+3461  CE49 CD 6A C5         call UpdatePlayer
+3462  CE4C CD 41 C8         call UpdateEnemies
+3463  CE4F CD A6 CA         call UpdatePowerup
+3464  CE52 CD 33 CD         call CheckLevelEnd
+3465  CE55
+3466  CE55                  ; Check level timer expiry
+3467  CE55 2A 42 80         ld hl, (level_timer)
+3468  CE58 7C               ld a, h
+3469  CE59 B5               or l
+3470  CE5A 20 03            jr nz, .mg_timer_ok
+3471  CE5C CD 12 CD         call PlayerDie
+3472  CE5F              .mg_timer_ok:
+3473  CE5F
+3474  CE5F CD BA C2         call RenderLevel
+3475  CE62 CD FE CA         call DrawPowerup
+3476  CE65 CD 7E C9         call DrawEnemies
+3477  CE68 CD 31 CA         call DrawPlayer
+3478  CE6B CD 25 CB         call DrawHUD
+3479  CE6E
+3480  CE6E C3 40 CE         jp .mg_frame
+3481  CE71
+3482  CE71              .mg_other:
+3483  CE71 FE 02            cp STATE_DEAD
+3484  CE73 CA 88 CE         jp z, .mg_dead
+3485  CE76 FE 03            cp STATE_LEVELEND
+3486  CE78 CA CC CE         jp z, .mg_levelend
+3487  CE7B FE 05            cp STATE_GAMEOVER
+3488  CE7D CA EE CE         jp z, .mg_gameover
+3489  CE80 FE 06            cp STATE_WIN
+3490  CE82 CA F4 CE         jp z, .mg_win
+3491  CE85 C3 40 CE         jp .mg_frame
+3492  CE88
+3493  CE88              .mg_dead:
+3494  CE88 21 20 80         ld hl, plr_dead_timer
+3495  CE8B 34               inc (hl)
+3496  CE8C 7E               ld a, (hl)
+3497  CE8D FE 3C            cp 60
+3498  CE8F D2 BB CE         jp nc, .mg_respawn
+3499  CE92
+3500  CE92                  ; Death bounce
+3501  CE92 FE 19            cp 25
+3502  CE94 30 0C            jr nc, .mg_dfalling
+3503  CE96 2A 16 80         ld hl, (plr_y)
+3504  CE99 7D               ld a, l
+3505  CE9A D6 03            sub 3
+3506  CE9C 6F               ld l, a
+3507  CE9D 22 16 80         ld (plr_y), hl
+3508  CEA0 18 0A            jr .mg_drender
+3509  CEA2              .mg_dfalling:
+3510  CEA2 2A 16 80         ld hl, (plr_y)
+3511  CEA5 7D               ld a, l
+3512  CEA6 C6 04            add a, 4
+3513  CEA8 6F               ld l, a
+3514  CEA9 22 16 80         ld (plr_y), hl
+3515  CEAC
+3516  CEAC              .mg_drender:
+3517  CEAC CD BA C2         call RenderLevel
+3518  CEAF CD 7E C9         call DrawEnemies        ; CHANGED: Fix 64 — erase+redraw enemies during death anim to clear trails
+3519  CEB2 CD 31 CA         call DrawPlayer
+3520  CEB5 CD 25 CB         call DrawHUD
+3521  CEB8 C3 40 CE         jp .mg_frame
+3522  CEBB
+3523  CEBB              .mg_respawn:
+3524  CEBB 21 3E 80         ld hl, lives
+3525  CEBE 35               dec (hl)
+3526  CEBF 7E               ld a, (hl)
+3527  CEC0 B7               or a
+3528  CEC1 CA EE CE         jp z, .mg_gameover
+3529  CEC4 3E 01            ld a, STATE_PLAYING
+3530  CEC6 32 39 80         ld (game_state), a
+3531  CEC9                  ; Fix 36: removed 'call InitLevel' here — jp .mg_level calls ShowLevelEntry
+3532  CEC9                  ; then InitLevel, so calling InitLevel here was doing a full double-init.
+3533  CEC9 C3 2E CE         jp .mg_level
+3534  CECC
+3535  CECC              .mg_levelend:
+3536  CECC 06 64            ld b, 100
+3537  CECE              .mg_le_wait:
+3538  CECE 76               halt
+3539  CECF 10 FD            djnz .mg_le_wait
+3540  CED1
+3541  CED1 21 41 80         ld hl, level_num
+3542  CED4 34               inc (hl)
+3543  CED5 7E               ld a, (hl)
+3544  CED6 FE 03            cp 3
+3545  CED8 20 0C            jr nz, .mg_nextlevel
+3546  CEDA 36 00            ld (hl), 0
+3547  CEDC 21 40 80         ld hl, world
+3548  CEDF 34               inc (hl)
+3549  CEE0 7E               ld a, (hl)
+3550  CEE1 FE 03            cp 3
+3551  CEE3 D2 F4 CE         jp nc, .mg_win
+3552  CEE6              .mg_nextlevel:
+3553  CEE6 3E 01            ld a, STATE_PLAYING
+3554  CEE8 32 39 80         ld (game_state), a
+3555  CEEB C3 2E CE         jp .mg_level
+3556  CEEE
+3557  CEEE              .mg_gameover:
+3558  CEEE CD A8 CC         call ShowGameOver
+3559  CEF1 C3 27 CE         jp .mg_restart
+3560  CEF4
+3561  CEF4              .mg_win:
+3562  CEF4 CD C6 CC         call ShowVictory
+3563  CEF7 C3 27 CE         jp .mg_restart
+3564  CEFA
+3565  CEFA              ; ============================================================
+3566  CEFA              ; IM2 VECTOR TABLE
+3567  CEFA              ; ============================================================
+3568  CEFA                  ORG IM2_TABLE
 3569  7E00 BC BC BC...      DS 257, $BC
 3570  7F01
 3571  7F01              ; ============================================================

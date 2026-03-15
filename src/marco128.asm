@@ -4,7 +4,7 @@
 ; Inspired by classic 8-bit platformers of the 1980s.
 ; Assembler: sjasmplus (z00m fork)
 ; Build:     sjasmplus --nologo --lst=build/marco128.lst marco128.asm
-; Version:   0.7.8
+; Version:   0.7.9
 ; ============================================================
 
     DEVICE ZXSPECTRUM128
@@ -126,7 +126,7 @@ NOTE_B5         EQU 112     ; B5  = 988 Hz
     ld a, 2
     out ($FE), a
     jp GAME_START
-    DEFB "MB128 v0.7.8", 0   ; version tag in binary
+    DEFB "MB128 v0.7.9", 0   ; version tag in binary
 
 ; ============================================================
 ; GAME VARIABLES  ($8003 onwards)
@@ -1952,9 +1952,9 @@ EraseSprite:
     ld a, l
     add a, $20
     ld l, a
-    jr nc, .er_ok
-    ld a, h
-    sub $08
+    jr c, .er_ok        ; CHANGED: Fix 71 — was jr nc: same inverted carry as Fix 27/28/68.
+    ld a, h             ; carry → crossed third boundary → H correct, skip sub.
+    sub $08             ; no carry → same third → H overshot → correct.
     ld h, a
 .er_ok:
     djnz .er_row
@@ -2844,29 +2844,33 @@ DrawEnemies:
 .den_draw:
     pop af
     ld c, a             ; screen_y
-    cp 176              ; CHANGED: Fix 60 — was 177; screen_y=176 attr bottom row writes $5B00 (sysvar)
-    jp nc, .den_skip    ; CHANGED: Fix 49 — skip draw entirely if off-screen bottom
-    ld b, iyh           ; screen_x
 
-    ; Fix 53/66 — erase at previous screen position before drawing at new position.
-    ; Fix 66: skip if ent_prev_sy[idx]=255 (InitLevel sentinel — not yet drawn).
-    push bc             ; save new screen_x/screen_y
-    push ix             ; save chosen sprite
+    ; Fix 72 — erase at previous position BEFORE screen_y guard.
+    ; IYL = entity index (set at loop entry, still valid here).
+    ; Fix 66 sentinel (ent_prev_sy=255) still guards EraseSprite.
     ld d, 0
     ld e, iyl           ; DE = entity index
     ld hl, ent_prev_sy
     add hl, de
-    ld c, (hl)          ; C = prev screen_y
-    ld a, c
-    cp 255              ; CHANGED: Fix 66 — 255 = never drawn, skip erase
+    ld a, (hl)
+    cp 255              ; 255 = never drawn this level, skip erase
     jr z, .den_skip_erase
     ld hl, ent_prev_sx
     add hl, de
     ld b, (hl)          ; B = prev screen_x
-    call EraseSprite    ; zero pixels at last drawn position
-.den_skip_erase:        ; CHANGED: Fix 66
-    pop ix
-    pop bc              ; restore new screen_x/screen_y
+    push de             ; save entity index
+    push bc             ; save new screen_y in C (B=prev_sx, will be overwritten but C is what matters)
+    ld hl, ent_prev_sy
+    add hl, de
+    ld c, (hl)          ; C = prev screen_y
+    call EraseSprite
+    pop bc              ; restore C = new screen_y
+    pop de              ; restore entity index
+.den_skip_erase:        ; CHANGED: Fix 72
+
+    ld b, iyh           ; screen_x
+    cp 176              ; CHANGED: Fix 60 — was 177
+    jp nc, .den_skip    ; CHANGED: Fix 49 — screen_y >= 176 corrupts attr/sysvar
 
     call DrawSprite
 
@@ -2930,6 +2934,19 @@ DrawPlayer:
     ld ix, SPR_MARCO_JUMP
 
 .dp_draw:
+    ; Fix 72 — erase at previous position BEFORE screen_y guard.
+    ; Old code skipped erase when guard fired → old pixels left on screen → jump trail.
+    ; Fix 66 sentinel (prev_sy=255) still guards EraseSprite itself.
+    ld a, (plr_prev_sy)
+    cp 255              ; 255 = never drawn this level, skip erase
+    jr z, .dp_skip_erase
+    ld a, (plr_prev_sx)
+    ld b, a             ; prev screen_x
+    ld a, (plr_prev_sy)
+    ld c, a             ; prev screen_y
+    call EraseSprite
+.dp_skip_erase:
+
     ; Fix 32: 16-bit screen_x = plr_x - cam_x
     ; plr_x and cam_x are both DW; using only low byte fails once x > 255.
     ld hl, (plr_x)
@@ -2944,25 +2961,8 @@ DrawPlayer:
 
     ld a, (plr_y)
     ld c, a             ; screen_y
-    cp 176              ; CHANGED: Fix 60 — was 177; screen_y=176 attr bottom row writes $5B00 (sysvar)
-    jp nc, .dp_done     ; CHANGED: Fix 49 — to $5800 (attr area): skip draw to prevent crash
-
-    ; Fix 53/66 — erase at previous screen position before drawing at new position.
-    ; Fix 66: skip if prev_sy=255 (InitLevel sentinel — not yet drawn this level).
-    ; prev_sy=255 → EraseSprite addr=$5Fxx (attr/sysvar area) → corrupts BANKM.
-    push bc             ; save new screen_x/screen_y
-    push ix             ; save chosen sprite
-    ld a, (plr_prev_sy)
-    cp 255              ; CHANGED: Fix 66 — 255 = never drawn, skip erase
-    jr z, .dp_skip_erase
-    ld a, (plr_prev_sx)
-    ld b, a             ; prev screen_x
-    ld a, (plr_prev_sy)
-    ld c, a             ; prev screen_y
-    call EraseSprite    ; zero pixels at last drawn position
-.dp_skip_erase:         ; CHANGED: Fix 66
-    pop ix
-    pop bc              ; restore new screen_x/screen_y
+    cp 176              ; CHANGED: Fix 60 — was 177
+    jp nc, .dp_done     ; CHANGED: Fix 49 — screen_y >= 176 corrupts attr/sysvar area
 
     call DrawSprite
 
