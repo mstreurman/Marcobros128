@@ -104,9 +104,6 @@
 ;;;   Q2: programming experience in general?
 ;;;   Q3: Z80 assembly experience specifically?
 ;;; Then calibrate communication depth to their answers.
-;;; Known (this user): IBM Lenovo server support tech, 25yr IT, ZX Spectrum 48K background,
-;;;   no formal programming training, can follow C++/BASIC, cannot write Z80 unaided.
-;;; Style: plain English explanations, hardware analogies, Z80 jargon in code/changelog only.
 ;;;
 ;;; USER PROVIDES EACH SESSION:
 ;;;   - Fresh GitHub PAT token (for git push)
