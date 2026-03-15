@@ -21,7 +21,7 @@ cd repo
 ```
 1. CLAUDE.md          ← you are here. Finish reading it.
 2. marco128.md        ← current project state: version, open issues,
-                         addresses, sysvar layout, bug history (all 67 fixes),
+                         addresses, sysvar layout, bug history (all 72 fixes),
                          subroutine contracts
 3. lessons.md         ← pre-flight checklist, Z80 gotchas, coding rules,
                          listing/profiler reading guide
@@ -249,7 +249,7 @@ Format: `main.major.minor`
 - `major` — new feature or significant behaviour change
 - `main` — milestone (complete world, major gameplay feature)
 
-Current: **v0.7.7**
+Current: **v0.7.9**
 
 ---
 

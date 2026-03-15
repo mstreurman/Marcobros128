@@ -2,7 +2,7 @@
 ### An original 8-bit platformer for ZX Spectrum 128K Toastrack
 *Inspired by classic side-scrolling platformers of the 1980s.*
 
-**Current version: v0.7.7**
+**Current version: v0.7.9**
 
 ---
 
@@ -99,27 +99,27 @@ $C06E  DrawString       Draws null-terminated string via DrawCharXY
 $C224  DrawTile         Draws 16×16 tile (skips AIR tiles — Fix 47)
 $C2BA  RenderLevel      Draws visible tile columns from level_map_cache
 $C4A8  DrawSprite       Draws 16×16 masked sprite (OR-mask, no attr write)
-$C52C  EraseSprite      Zeros 16×16 pixel area (3 bytes × 16 rows)
-$C570  UpdatePlayer     Physics, input, CheckGround/Walls/Ceiling
-$C6C5  CheckGround      Snaps player to tile boundary on landing
-$C710  CheckCeiling     Bounces player off ceiling tiles
-$C75E  CheckWalls       Prevents player walking through solid tiles
-$C7FC  UpdateCamera     Smooth horizontal scroll toward player
-$C847  UpdateEnemies    Moves enemies, bounces at edges, CheckEnemyPlayer
-$C984  DrawEnemies      Erase-at-prev + draw enemies with sprite selection
-$CA35  DrawPlayer       Erase-at-prev + draw player with animation
-$CB08  DrawPowerup      Draws active powerup sprite
-$CB2F  DrawHUD          Score, world, timer, lives display
-$CC03  TitleScreen      Title loop, waits for Space
-$CC68  ShowLevelEntry   Level card (world/level/lives), 2-second pause
-$CCB2  ShowGameOver     Game Over screen, waits for Space to continue
-$CCD0  ShowVictory      Victory screen with fanfare music
-$CD1C  PlayerDie        Sets STATE_DEAD, plays SFX, stops music
-$CD3D  CheckLevelEnd    Detects TILE_FLAG contact → STATE_LEVELEND
-$CD5C  InitGame         Resets score/lives/world/level
-$CD78  InitLevel        ClearScreen, resets player/camera/timer/enemies/prev positions
-$CE21  MainLoop         Title → game loop → death/respawn → game over
-$CE41  mg_frame HALT    Main game loop HALT (50Hz sync point)
+$C529  EraseSprite      Zeros 16×16 pixel area (3 bytes × 16 rows)
+$C56A  UpdatePlayer     Physics, input, CheckGround/Walls/Ceiling
+$C6BF  CheckGround      Snaps player to tile boundary on landing
+$C70A  CheckCeiling     Bounces player off ceiling tiles
+$C758  CheckWalls       Prevents player walking through solid tiles
+$C7F6  UpdateCamera     Smooth horizontal scroll toward player
+$C841  UpdateEnemies    Moves enemies, bounces at edges, CheckEnemyPlayer
+$C97E  DrawEnemies      Erase-at-prev + draw enemies with sprite selection
+$CA31  DrawPlayer       Erase-at-prev + draw player with animation
+$CAFE  DrawPowerup      Draws active powerup sprite
+$CB25  DrawHUD          Score, world, timer, lives display
+$CBF9  TitleScreen      Title loop, waits for Space
+$CC5E  ShowLevelEntry   Level card (world/level/lives), 2-second pause
+$CCA8  ShowGameOver     Game Over screen, waits for Space to continue
+$CCC6  ShowVictory      Victory screen with fanfare music
+$CD12  PlayerDie        Sets STATE_DEAD, plays SFX, stops music
+$CD33  CheckLevelEnd    Detects TILE_FLAG contact → STATE_LEVELEND
+$CD52  InitGame         Resets score/lives/world/level
+$CD6E  InitLevel        ClearScreen, resets player/camera/timer/enemies/prev positions
+$CE20  MainLoop         Title → game loop → death/respawn → game over
+$CE40  mg_frame HALT    Main game loop HALT (50Hz sync point)
 ```
 
 ### Sysvar Block ($8014-$80B4, bank2 fixed)
@@ -165,8 +165,8 @@ See **`architecture.md`** for ZX Spectrum 128K hardware reference.
 See **`marco128.md`** for project-specific data including:
 - Hardware specs and memory paging rules
 - Cross-bank calling rules (bank7 may call bank2; not the reverse)
-- Subroutine contracts (IN/OUT/CLOBBERS for every routine)
-- Complete bug history (67 fixes)
+- Subroutine contracts: marco128_contracts.md
+- Complete bug history (72 fixes)
 - Pre-flight checklist for all code changes
 
 ---
@@ -272,12 +272,12 @@ grep "Version" src/marco128.asm | head -1  # current version
 
 ### Architecture notes:
 - Hardware reference: `architecture.md` (ZX Spectrum 128K)
-- Bug history (67 fixes): Section B9 of `marco128.md`
+- Bug history (72 fixes): marco128_history.md
 - Subroutine contracts: Section B11 of `marco128.md`
 - Pre-flight checklist for all code changes: Section C3.6 of `lessons.md`
 
-### Current open issues (as of v0.7.7):
-- Sprite ghosting during transitions (cosmetic)
-- HUD attribute overlap with tile row 0-1 (cosmetic)
-- Game performance ~7fps (acceptable but improvable)
-- Enemy contact crash — may be resolved in v0.7.7, needs profiler run to confirm
+### Current open issues (as of v0.7.9):
+- HUD flicker (architectural — RenderLevel draws tile row 1 before DrawHUD redraws text; accept)
+- Sheller stomp: shell-slide behaviour not yet implemented (Fix P3)
+- pwrup_xl is DB (8-bit); powerups past tile 16 won't place correctly (Fix P4)
+- Full 9-level gameplay verification pending

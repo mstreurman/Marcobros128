@@ -2,7 +2,7 @@
 *Project-specific data: addresses, contracts, bugs, game state.*
 *See architecture.md for ZX Spectrum 128K hardware reference.*
 *See lessons.md for reusable Z80 coding rules and gotchas.*
-*Last updated: v0.7.8*
+*Last updated: v0.7.9*
 
 ---
 
@@ -64,9 +64,9 @@ $8000        Entry stub:    ld a,2 / out($FE),a (red border) / JP GAME_START
              MUSIC:         music_ptr(DW), music_note_ptr(DW), music_frame,
                             music_playing
              RENDER:        cam_tile_x, cam_sub_x, bankswitch_ok
-$80A3        level_map_cache  DS 704 (MAP_W×MAP_H = 64×11) — v0.7.7 listing confirmed
+$80B5        level_map_cache  DS 704 (MAP_W×MAP_H = 64×11) — v0.7.9
                               Immediately follows variable block; drifts with it.
-$8375        GAME_START     di; ld sp,$BBFE; ld a,$17; ld($5B5C),a;  — v0.7.7 listing
+$8375        GAME_START     di; ld sp,$BBFE; ld a,$17; ld($5B5C),a; — v0.7.9
                             ld a,1; ld(bankswitch_ok),a;
                             call Setup_IM2; call ClearScreen; call AY_Silence; jp MainLoop
 $838F        Setup_IM2      Fills $7E00 with $BC×257; writes JP $BC00 at $BCBC; ld i,$7E; im 2; ei; ret  — v0.6.5
@@ -93,8 +93,8 @@ $BCEB        Music_Stop     Sets music_playing=0, calls AY_Silence
 $BCF3        Music_Tick     Advances music by one frame (reads note, writes ay_buf)
 $BD62        SFX_Play       A=sfx index; sets sfx_ptr, sfx_active=1
 $BD7F        SFX_Tick       Advances SFX by one frame (overwrites ay_buf ch C)
-$BF7B        BankSwitch     A=bank number; guards on bankswitch_ok; reads BANKM; OUT $7FFD  — v0.7.8
-$BF9B        ClearScreen    di; clear pixels+attrs via LDIR×2; out blue; ei; ret  — v0.7.8
+$BF7B        BankSwitch     A=bank number; guards on bankswitch_ok; reads BANKM; OUT $7FFD  — v0.7.9
+$BF9B        ClearScreen    di; clear pixels+attrs via LDIR×2; out blue; ei; ret  — v0.7.9
 $BFFD        DrawCharXY     PINNED (ORG $BFFD). JP DrawCharXY_Real — last 3 bytes of bank2
 ```
 
@@ -104,20 +104,20 @@ $C000        DrawCharXY_Real  B=col, C=row, A=char
                              Fix41: A<128→ROM1 font ($3D00+(A-32)*8); A>=128→FONT_DATA+((A-128)*8)
 $C05E        DrawString       HL=null-terminated string, B=col, C=row
 ~$C200       DrawTile         16×16 tile blit
-~$C400       DrawSprite       IX=sprite, B=pixel_y, C=pixel_x; mask+OR blit  — $C4A8 v0.7.8
-~$C529       EraseSprite      Zero 16×16 pixel area at B=screen_x, C=screen_y  — v0.7.8
-~$C56A       UpdatePlayer     Input→physics→position  — v0.7.8
-~$C841       UpdateEnemies    Entity array walk  — v0.7.8
-~$C8EA       CheckEnemyPlayer AABB vs player, stomp/hurt  — v0.7.8
-~$C97E       DrawEnemies      Erase+draw all active enemies  — v0.7.8
-~$CA2F       DrawPlayer       Erase+draw player  — v0.7.8
+~$C400       DrawSprite       IX=sprite, B=pixel_y, C=pixel_x; mask+OR blit; no rrca on prow (Fix68)  — $C4A8 v0.7.9
+~$C529       EraseSprite      Zero 16×16 pixel area; jr c row-advance (Fix71)  — v0.7.9
+~$C56A       UpdatePlayer     Input→physics→position  — v0.7.9
+~$C841       UpdateEnemies    Entity array walk  — v0.7.9
+~$C8EA       CheckEnemyPlayer AABB vs player, stomp(falling down)/hurt(moving up)  — v0.7.9 Fix69
+~$C97E       DrawEnemies      Erase+draw enemies, erase-before-guard  — v0.7.9 Fix72
+~$CA31       DrawPlayer       Erase+draw player, erase-before-guard  — v0.7.9 Fix72
 ~$C6A0       UpdateEnemies    Entity array walk
 ~$C800       CheckCollisions
 ~$C900       DrawPowerup
-~$C98C       DrawHUD          Score(4 BCD digits), lives, coins, timer
-~$CBA0       InitGame         lives=3, score=0, world=0, level=0
-$CD56        InitLevel        game_state=PLAYING; DoLevelBanking; Music_Init(OVERWORLD)  — v0.7.8
-$CC4E        MainLoop         Title→InitGame→ShowLevelEntry→InitLevel→frame loop
+~$CB25       DrawHUD          Score(4 BCD digits), lives, coins, timer
+~$CD52       InitGame         lives=3, score=0, world=0, level=0
+~$CD6E        InitLevel        game_state=PLAYING; DoLevelBanking; Music_Init(OVERWORLD)  — v0.7.9
+$CE20        MainLoop         Title→InitGame→ShowLevelEntry→InitLevel→frame loop
 ```
 
 ### Banks 0, 1, 3 — Level Data (paged only during InitLevel)
@@ -240,7 +240,7 @@ SP=[20-21]  PC=[22-23]  I=[24]  IFF1=[26]  IFF2=[27]  IM=[28]
 
 ## B9. KNOWN BUGS / FIX HISTORY
 
-Full bug history (67 fixes) moved to  to reduce token usage.
+Full bug history (72 fixes) moved to  to reduce token usage.
 Consult it when debugging a specific crash pattern or fix regression.
 
 ## B10. DEBUG BORDER COLOURS

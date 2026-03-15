@@ -1,7 +1,7 @@
 # ZX SPECTRUM 128K TOASTRACK — Hardware Reference
 *Machine-readable hardware reference for Z80/Spectrum development.*
 *Reusable across any ZX Spectrum 128K Toastrack project.*
-*Last updated: v0.7.7 (Marco Bros 128 project)*
+*Last updated: v0.7.9 (Marco Bros 128 project)**
 
 ---
 
